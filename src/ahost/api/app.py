@@ -54,10 +54,23 @@ def create_app(cfg: Config, store: auth.Store | None = None) -> FastAPI:
     limiter = auth.RateLimiter()
     apps_dir = Path(cfg.paths.apps_dir)
     index = UI_DIST / "index.html"
-    script_hashes = _inline_script_hashes(index.read_text()) if index.exists() else []
-    csp = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-           f"script-src 'self' {' '.join(script_hashes)}; connect-src 'self'; font-src 'self' data:; "
-           "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
+    _csp_cache: dict[str, object] = {"mtime": None, "value": ""}
+
+    def csp() -> str:
+        """CSP allowing exactly the dashboard's inline scripts. Recomputed whenever index.html changes (a UI
+        reinstall must never leave a running server with stale hashes)."""
+        try:
+            mtime = index.stat().st_mtime_ns
+        except OSError:
+            mtime = None
+        if mtime != _csp_cache["mtime"]:
+            hashes = _inline_script_hashes(index.read_text()) if mtime else []
+            _csp_cache["value"] = (
+                "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                f"script-src 'self' {' '.join(hashes)}; connect-src 'self'; font-src 'self' data:; "
+                "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
+            _csp_cache["mtime"] = mtime
+        return str(_csp_cache["value"])
 
     def client_ip(req: Request) -> str:
         return req.headers.get("x-real-ip") or (req.client.host if req.client else "?")
@@ -74,7 +87,7 @@ def create_app(cfg: Config, store: auth.Store | None = None) -> FastAPI:
                     return JSONResponse({"detail": "not signed in"}, status_code=401)
                 request.state.user = user
         resp = await call_next(request)
-        resp.headers["Content-Security-Policy"] = csp
+        resp.headers["Content-Security-Policy"] = csp()
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "no-referrer"

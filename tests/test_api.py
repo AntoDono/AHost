@@ -79,3 +79,14 @@ def test_create_validates(client):
     assert (tmp / "apps/blog.toml").exists()
     assert c.post("/api/apps", json=good, headers=H).status_code == 409
     assert "blog" in c.get("/api/apps/blog/manifest").json()["toml"]
+
+
+def test_csp_follows_index_changes(client):
+    import os
+    c, tmp = client
+    first = c.get("/").headers["content-security-policy"]
+    idx = tmp / "dist" / "index.html"
+    idx.write_text('<html><script>window.__NUXT__={changed:1}</script></html>')
+    os.utime(idx, ns=(idx.stat().st_atime_ns, idx.stat().st_mtime_ns + 1_000_000))
+    second = c.get("/").headers["content-security-policy"]
+    assert first != second and "sha256-" in second
