@@ -249,3 +249,22 @@ def test_static_root_mode(workdir, cfg):
                              "raw": "try_files $uri =404;"}, {"path": "/", "to": "main"}])
     site = render.render_site(a, {"main": 1}, cfg, render.Facts()).content
     assert f"root {workdir}/public;" in site and "alias" not in site
+
+
+def test_auto_port_replaces_pinned_or_out_of_range(workdir, cfg):
+    reg = Registry(":memory:", cfg)
+    a = mk(workdir, port=5120)
+    assert reg.resolve(a, listening={}, commit=True) == {"main": 5120}
+    moved = reg.resolve(mk(workdir, port="auto"), listening={}, commit=True)
+    assert moved["main"] != 5120 and 10000 <= moved["main"] <= 10010
+    assert reg.resolve(mk(workdir, port="auto"), listening={}, commit=True) == moved  # then stable
+
+
+def test_raw_port_placeholder(workdir, cfg):
+    a = mk(workdir, proxy={"raw_http": "upstream blog_app { server 127.0.0.1:{port}; }",
+                           "raw_server": "location /x { proxy_pass http://127.0.0.1:{port:main}; }"})
+    site = render.render_site(a, {"main": 10004}, cfg, render.Facts()).content
+    assert "server 127.0.0.1:10004;" in site and "proxy_pass http://127.0.0.1:10004;" in site
+    bad = mk(workdir, proxy={"raw_server": "location /x { proxy_pass http://127.0.0.1:{port:nope}; }"})
+    with pytest.raises(ValueError):
+        render.render_site(bad, {"main": 1}, cfg, render.Facts())

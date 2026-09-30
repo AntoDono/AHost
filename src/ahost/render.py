@@ -7,6 +7,7 @@ Pure functions of (manifest, config, ports, facts). No I/O except reading templa
 from __future__ import annotations
 
 import os
+import re
 import shlex
 from dataclasses import dataclass, field
 from importlib import resources
@@ -17,6 +18,21 @@ import jinja2
 from .config import Config
 from .models import App, Process, Route
 from .policy import resolve
+
+PORT_REF = re.compile(r"\{port(?::([a-z][a-z0-9-]{0,19}))?\}")
+
+
+def fill_ports(text: str | None, ports: dict[str, int]) -> str | None:
+    """Replace {port} (the main/only process) and {port:<process>} in raw nginx snippets."""
+    if not text:
+        return text
+
+    def sub(m: re.Match) -> str:
+        pid = m.group(1) or ("main" if "main" in ports else (next(iter(ports)) if len(ports) == 1 else None))
+        if pid is None or pid not in ports:
+            raise ValueError(f"raw nginx refers to {m.group(0)} but that process has no port")
+        return str(ports[pid])
+    return PORT_REF.sub(sub, text)
 
 SHELL_OPS = ("&&", "||", ";", "|", ">", "<", "`", "$(")
 CACHE_PATHS = {
@@ -238,7 +254,7 @@ def _location(app: App, r: Route, ports: dict[str, int]) -> str:
     for k, v in r.headers.items():
         L.append(f'add_header {k} "{v}" always;')
     if r.raw:
-        L += [ln.rstrip() for ln in r.raw.strip().splitlines()]
+        L += [ln.rstrip() for ln in fill_ports(r.raw, ports).strip().splitlines()]
     body = "\n".join("    " + ln for ln in L)
     return f"location {r.path} {{\n{body}\n}}"
 
@@ -247,6 +263,8 @@ def render_site(app: App, ports: dict[str, int], cfg: Config, facts: Facts) -> A
     if not app.domains:
         return None
     locations = "\n\n".join(_location(app, r, ports) for r in app.effective_routes())
+    app = app.model_copy(update={"proxy": app.proxy.model_copy(update={
+        "raw_http": fill_ports(app.proxy.raw_http, ports), "raw_server": fill_ports(app.proxy.raw_server, ports)})})
     https = [{"cert": cert, "domains": doms} for cert, doms in app.cert_groups().items()
              if cert in facts.certs_present]
     text = _env().get_template("site.conf.j2").render(

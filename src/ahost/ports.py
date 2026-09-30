@@ -76,6 +76,10 @@ class Registry:
         row = self.db.execute("SELECT port FROM ports WHERE app=? AND process=?", (app, process)).fetchone()
         return row[0] if row else None
 
+    def row(self, app: str, process: str) -> tuple[int, bool] | None:
+        r = self.db.execute("SELECT port, pinned FROM ports WHERE app=? AND process=?", (app, process)).fetchone()
+        return (r[0], bool(r[1])) if r else None
+
     def owner(self, port: int) -> tuple[str, str] | None:
         row = self.db.execute("SELECT app, process FROM ports WHERE port=?", (port,)).fetchone()
         return (row[0], row[1]) if row else None
@@ -91,7 +95,9 @@ class Registry:
         for pid, proc in app.processes.items():
             if proc.port is None:
                 continue
-            current = self.get(app.name, pid)
+            row = self.row(app.name, pid)
+            current = row[0] if row else None
+            lo, hi = self.cfg.ports.range
             if isinstance(proc.port, int):
                 port = proc.port
                 owner = self.owner(port)
@@ -100,8 +106,8 @@ class Registry:
                 if port in self.cfg.ports.reserved:
                     raise PortError(f"{app.name}.{pid}: port {port} is reserved")
                 pinned = True
-            elif current is not None:
-                port, pinned = current, False
+            elif current is not None and not row[1] and lo <= current <= hi:
+                port, pinned = current, False  # an auto port stays stable across applies
             else:
                 port, pinned = self._free(listening, taken_now), False
             taken_now.add(port)
