@@ -1,0 +1,17 @@
+# AHost app template. Instances: ahost@<app>.service, or ahost@<app>:<process>.service.
+# Per-instance settings live in ahost@<instance>.service.d/override.conf (generated; do not edit).
+[Unit]
+Description=AHost app %i
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/ahost/apps/%i.env
+ExecStart=/etc/ahost/apps/%i.sh
+Restart=always
+RestartSec=5
+KillMode=control-group
+SyslogIdentifier=ahost-%i
+
+[Install]
+WantedBy=multi-user.target

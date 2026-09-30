@@ -1,0 +1,4 @@
+#!/bin/sh
+# Root-owned launcher for the AHost helper (installed to /usr/local/sbin/ahost-helper).
+# -I: isolated mode, ignores PYTHON* environment variables and the user site directory.
+exec /opt/ahost/venv/bin/python -I -m ahost.helper "$@"

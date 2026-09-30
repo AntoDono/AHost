@@ -1,0 +1,6 @@
+# Groups the processes of a multi-process AHost app: ahost@<app>.target
+[Unit]
+Description=AHost app %i (all processes)
+
+[Install]
+WantedBy=multi-user.target

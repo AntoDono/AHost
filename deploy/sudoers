@@ -1,0 +1,3 @@
+# AHost: only the ahost service user may run the helper without a password.
+# The helper accepts a fixed set of verbs and renders every file itself from validated manifests.
+ahost ALL=(root) NOPASSWD: /usr/local/sbin/ahost-helper

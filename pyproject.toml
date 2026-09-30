@@ -1,0 +1,31 @@
+[project]
+name = "ahost"
+version = "0.1.0"
+description = "Self-hosted app hosting for a single Linux server: systemd + nginx + certbot from one manifest per app"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.8",
+    "tomlkit>=0.13",
+    "jinja2>=3.1",
+    "typer>=0.12",
+]
+
+[project.scripts]
+ahost = "ahost.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ahost"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
