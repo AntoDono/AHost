@@ -68,7 +68,9 @@ if [ -d "$src/ui" ]; then
   [ -x "$bun" ] || { echo "bun not found at $bun" >&2; exit 1; }
   build=$(sudo -u "$op_user" mktemp -d)
   tar -C "$src" -c ui | sudo -u "$op_user" tar -C "$build" -x
-  sudo -u "$op_user" -H bash -c "cd '$build/ui' && '$bun' install --frozen-lockfile && '$bun' run generate" > "$build/build.log" 2>&1 \
+  # sudo resets PATH; the UI's package scripts call `bun` themselves, so put bun's dir first
+  sudo -u "$op_user" -H env PATH="$(dirname "$bun"):/usr/local/bin:/usr/bin:/bin" \
+    bash -c "cd '$build/ui' && bun install --frozen-lockfile && bun run generate" > "$build/build.log" 2>&1 \
     || { tail -30 "$build/build.log" >&2; echo "UI build failed (log: $build/build.log)" >&2; exit 1; }
   rm -rf /opt/ahost/ui.new && cp -r "$build/ui/.output/public" /opt/ahost/ui.new
   chown -R root:root /opt/ahost/ui.new && chmod -R go-w,a+rX /opt/ahost/ui.new
