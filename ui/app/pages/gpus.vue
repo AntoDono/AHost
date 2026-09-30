@@ -3,6 +3,7 @@ const { data } = useOverview()
 const gpus = computed(() => data.value?.gpus ?? [])
 const maxTotal = computed(() => Math.max(1, ...gpus.value.map(g => g.total_mib)))
 const appNames = computed(() => new Set((data.value?.apps ?? []).map(a => a.name)))
+const NuxtLink = resolveComponent('NuxtLink')
 </script>
 
 <template>
@@ -24,14 +25,23 @@ const appNames = computed(() => new Set((data.value?.apps ?? []).map(a => a.name
             <div class="h-full border-r border-[var(--ah-panel)]" :style="{ width: `${(u.mib / g.total_mib) * 100}%`, background: cableColor(u.name) }" />
           </UTooltip>
         </div>
-        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-sm">
-          <span class="data text-xs text-muted">{{ mib(g.used_mib) }} / {{ mib(g.total_mib) }}</span>
-          <span v-for="u in g.users" :key="u.name" class="flex items-center gap-1.5 text-xs">
-            <span class="size-2.5 rounded-sm" :style="{ background: cableColor(u.name) }" />
-            {{ u.name }}<span class="text-dimmed" v-if="!appNames.has(u.name)"> (not AHost)</span>
+        <div class="data text-xs text-muted mt-2">{{ mib(g.used_mib) }} of {{ mib(g.total_mib) }} used</div>
+        <div class="flex flex-wrap gap-2 mt-3" :aria-label="`Apps using ${g.name}`">
+          <component
+            :is="appNames.has(u.name) ? NuxtLink : 'span'"
+            v-for="u in g.users" :key="u.name"
+            v-bind="appNames.has(u.name) ? { to: { path: '/', query: { app: u.name } } } : {}"
+            class="inline-flex items-center gap-2 rounded-md border pl-1.5 pr-2.5 py-1 text-sm"
+            :class="appNames.has(u.name) ? 'hover:bg-[var(--ah-panel-2)] focus-visible:outline-2 focus-visible:outline-primary' : 'border-dashed'"
+            :style="{ borderColor: cableColor(u.name) }"
+            :title="appNames.has(u.name) ? `Open ${u.name}` : `${u.name} isn't managed by AHost`"
+          >
+            <span class="size-3 rounded-sm" :style="{ background: cableColor(u.name) }" />
+            <span class="font-medium">{{ u.name }}</span>
             <span class="data text-xs text-muted">{{ mib(u.mib) }}</span>
-          </span>
-          <span v-if="!g.users.length" class="text-xs text-dimmed">idle</span>
+            <span v-if="!appNames.has(u.name)" class="text-xs text-dimmed">not AHost</span>
+          </component>
+          <span v-if="!g.users.length" class="text-sm text-dimmed">No apps on this card</span>
         </div>
       </section>
     </div>

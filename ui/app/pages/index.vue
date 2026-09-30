@@ -20,6 +20,12 @@ const apps = computed(() => {
 const selectedApp = computed(() => data.value?.apps.find(a => a.name === selected.value) ?? null)
 const trouble = computed(() => (data.value?.apps ?? []).filter(a => ['failed', 'unhealthy'].includes(a.state)))
 
+const route = useRoute()
+watch([() => route.query.app, () => data.value], () => {
+  const q = route.query.app
+  if (typeof q === 'string' && data.value?.apps.some(a => a.name === q) && selected.value !== q) open(q)
+}, { immediate: true })
+
 function open(name: string, tab = 'overview') {
   selected.value = name
   drawerTab.value = tab
