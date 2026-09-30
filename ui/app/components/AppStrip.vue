@@ -12,21 +12,29 @@ const unitLabel = computed(() => props.app.multi ? `ahost@${props.app.name} ×${
 const gpuNames = computed(() => props.app.gpus.map(i => props.gpus.find(g => g.index === i)?.name ?? `GPU ${i}`))
 const hovered = ref(false)
 const lit = computed(() => hovered.value)
+
+// Click anywhere on the strip opens the app, except on its own buttons/links (those do their own thing).
+function onClick(e: MouseEvent) {
+  if ((e.target as HTMLElement).closest('button, a, [role="button"]')) return
+  if (window.getSelection()?.toString()) return // let people select text (domains, ports) without opening
+  emit('open')
+}
 </script>
 
 <template>
   <article
-    class="group relative rounded-lg border border-default bg-[var(--ah-panel)] px-3 py-3 md:px-4 focus-visible:outline-2 focus-visible:outline-primary"
+    class="group relative cursor-pointer rounded-lg border border-default bg-[var(--ah-panel)] px-3 py-3 md:px-4 transition-[background-color,border-color,box-shadow] duration-150 hover:bg-[var(--ui-bg-elevated)] hover:border-[color-mix(in_srgb,var(--cable)_45%,var(--ah-rule))] hover:shadow-sm focus-visible:outline-2 focus-visible:outline-primary"
     :class="{ lit }"
     :style="{ '--cable': cable }"
     tabindex="0"
     :aria-label="`${app.name}: ${STATE_LABEL[app.state]}`"
     @mouseenter="hovered = true" @mouseleave="hovered = false" @focusin="hovered = true" @focusout="hovered = false"
+    @click="onClick"
     @keydown.l.exact="emit('open', 'logs')" @keydown.enter.exact.self="emit('open')"
   >
     <div class="grid gap-3 lg:grid-cols-[minmax(10rem,14rem)_minmax(0,1fr)_auto] lg:items-center">
       <!-- identity -->
-      <button class="flex items-center gap-3 min-w-0 text-left" @click="emit('open')">
+      <button class="flex items-center gap-3 min-w-0 text-left cursor-pointer" @click="emit('open')">
         <span class="led" :data-state="app.state" :class="{ pulsing: busy }" />
         <span class="min-w-0">
           <span class="block font-medium text-highlighted truncate">{{ app.name }}</span>
