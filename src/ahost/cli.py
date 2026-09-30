@@ -383,3 +383,7 @@ def logs(name: str, follow: Annotated[bool, typer.Option("-f", "--follow")] = Fa
 def helper_main() -> None:  # entry point used by /usr/local/sbin/ahost-helper
     from .helper import main
     sys.exit(main())
+
+
+if __name__ == "__main__":
+    app()

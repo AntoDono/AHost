@@ -43,21 +43,28 @@ git -C "$repo" archive "$rev" | tar -x -C "$src"
 [ -f "$src/uv.lock" ] || { echo "uv.lock missing in $rev" >&2; exit 1; }
 
 echo "== python + venv"
-mkdir -p /opt/ahost
+# Each install gets its own directory; /opt/ahost/venv is a symlink to the active one (atomic switch, easy rollback).
+# Building in place matters: venv scripts hard-code their interpreter path, so a venv can't be renamed afterwards.
+mkdir -p /opt/ahost/venvs
 /usr/local/bin/uv python install 3.12
-rm -rf /opt/ahost/venv.new
-/usr/local/bin/uv venv --python 3.12 /opt/ahost/venv.new
+revshort=$(git -C "$repo" rev-parse --short=12 "$rev")
+target="/opt/ahost/venvs/$revshort-$(date +%Y%m%d%H%M%S)"
+/usr/local/bin/uv venv --python 3.12 "$target"
 (cd "$src" && /usr/local/bin/uv export --frozen --no-dev --no-hashes --no-emit-project -o "$src/req.txt")
-/usr/local/bin/uv pip install --python /opt/ahost/venv.new -r "$src/req.txt"
-/usr/local/bin/uv pip install --python /opt/ahost/venv.new --no-deps "$src"
-rm -rf /opt/ahost/venv.old; [ -d /opt/ahost/venv ] && mv /opt/ahost/venv /opt/ahost/venv.old
-mv /opt/ahost/venv.new /opt/ahost/venv
+/usr/local/bin/uv pip install --python "$target" -r "$src/req.txt"
+/usr/local/bin/uv pip install --python "$target" --no-deps "$src"
+"$target/bin/python" -I -c "import ahost.helper, ahost.cli" || { echo "smoke test failed" >&2; exit 1; }
+[ -L /opt/ahost/venv ] || rm -rf /opt/ahost/venv /opt/ahost/venv.old   # migrate from the old layout
+ln -sfn "$target" /opt/ahost/venv.tmp && mv -T /opt/ahost/venv.tmp /opt/ahost/venv
+# keep the 3 newest installs for rollback: ln -sfn /opt/ahost/venvs/<older> /opt/ahost/venv
+ls -1dt /opt/ahost/venvs/* | tail -n +4 | xargs -r rm -rf
 chown -R root:root /opt/ahost /var/cache/ahost-uv; chmod -R go-w /opt/ahost
 git -C "$repo" rev-parse "$rev" > /opt/ahost/REVISION
 
 echo "== launchers"
 install -o root -g root -m 0755 "$src/deploy/ahost-helper" /usr/local/sbin/ahost-helper
-ln -sf /opt/ahost/venv/bin/ahost /usr/local/bin/ahost
+rm -f /usr/local/bin/ahost
+install -o root -g root -m 0755 "$src/deploy/ahost" /usr/local/bin/ahost
 
 echo "== user, group, sudoers"
 getent group ahost >/dev/null || groupadd --system ahost
