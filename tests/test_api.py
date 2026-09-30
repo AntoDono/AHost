@@ -1,8 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from ahost.api import auth
 from ahost.api import app as api_app
+from ahost.api import auth
 from ahost.config import Config
 
 H = {"X-AHost": "1"}

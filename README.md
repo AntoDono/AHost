@@ -8,7 +8,8 @@ It's built for the "one beefy box, many projects" setup (a GPU server, a homelab
 as plain processes in their own venv, uv, conda or Node environment, **not** in Docker, and where the
 hand-written unit + nginx site + certbot routine has stopped scaling.
 
-> **Status:** design complete, implementation starting. The docs describe the target behavior.
+> **Status:** working. CLI, root helper, adoption of legacy services, and the web dashboard are implemented and in
+> production use on one server. Sandboxing levels and multi-process splitting are implemented but lightly exercised.
 
 ## What it does
 
@@ -63,6 +64,17 @@ ahost logs blog-api -f
 ```
 
 More examples: [`examples/apps/`](examples/apps/): a static site, a GPU inference server, a multi-process app.
+
+## Dashboard
+
+`ahost.service` runs the API and serves the dashboard on `ui.bind` (127.0.0.1). With `ui.domain` set, the installer
+creates its nginx site and certificate (`ahost ui-site`). There's a password login (argon2), no default account:
+
+```bash
+sudo -u ahost ahost user add <name>
+```
+
+Rack (live status, start/stop/restart, logs), GPUs, Ports, and New hosting (form + live plan preview).
 
 ## Documentation
 

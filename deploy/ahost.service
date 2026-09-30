@@ -1,0 +1,23 @@
+# AHost dashboard + API (installed by deploy/install.sh). Not managed by itself as an ahost@ app.
+# Listens on ui.bind (127.0.0.1); nginx serves it on ui.domain with HTTPS (ahost-helper ui-site).
+#
+# Deliberately no filesystem sandboxing here: root actions go through `sudo ahost-helper`, and sudo children share
+# this unit's mount namespace, so ProtectSystem/ReadOnlyPaths would break the helper's writes to /etc.
+[Unit]
+Description=AHost dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=ahost
+Group=ahost
+SupplementaryGroups=systemd-journal
+# manifests it creates stay editable by the operator (group ahost, setgid apps dir)
+UMask=0002
+Environment=AHOST_UI_DIST=/opt/ahost/ui
+ExecStart=/opt/ahost/venv/bin/python -I -m ahost.cli serve
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

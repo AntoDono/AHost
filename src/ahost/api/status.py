@@ -148,6 +148,14 @@ def ports_view(cfg: Config) -> dict:
     listening = listening_ports()
     assigned = [{"port": a.port, "app": a.app, "process": a.process, "pinned": a.pinned,
                  "listening": a.port in listening} for a in reg.all()]
+    # manifests' pinned ports too (covers apps whose ports aren't in the registry yet, or an unreadable registry)
+    have = {(x["app"], x["process"]) for x in assigned}
+    apps, _ = load_all(Path(cfg.paths.apps_dir))
+    for a in apps.values():
+        for pid, proc in a.processes.items():
+            if isinstance(proc.port, int) and (a.name, pid) not in have:
+                assigned.append({"port": proc.port, "app": a.name, "process": pid, "pinned": True,
+                                 "listening": proc.port in listening})
     known = {a["port"] for a in assigned}
     lo, hi = cfg.ports.range
     other = [{"port": p, "who": who or "?", "in_range": lo <= p <= hi, "reserved": p in cfg.ports.reserved}

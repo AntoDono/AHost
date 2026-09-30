@@ -61,6 +61,22 @@ ls -1dt /opt/ahost/venvs/* | tail -n +4 | xargs -r rm -rf
 chown -R root:root /opt/ahost /var/cache/ahost-uv; chmod -R go-w /opt/ahost
 git -C "$repo" rev-parse "$rev" > /opt/ahost/REVISION
 
+echo "== dashboard UI (built by $op_user with bun; only static files are installed)"
+if [ -d "$src/ui" ]; then
+  [ -n "$op_user" ] || { echo "run via sudo so the UI can be built as your user" >&2; exit 1; }
+  bun="$(getent passwd "$op_user" | cut -d: -f6)/.bun/bin/bun"
+  [ -x "$bun" ] || { echo "bun not found at $bun" >&2; exit 1; }
+  build=$(sudo -u "$op_user" mktemp -d)
+  tar -C "$src" -c ui | sudo -u "$op_user" tar -C "$build" -x
+  sudo -u "$op_user" -H bash -c "cd '$build/ui' && '$bun' install --frozen-lockfile && '$bun' run generate" > "$build/build.log" 2>&1 \
+    || { tail -30 "$build/build.log" >&2; echo "UI build failed (log: $build/build.log)" >&2; exit 1; }
+  rm -rf /opt/ahost/ui.new && cp -r "$build/ui/.output/public" /opt/ahost/ui.new
+  chown -R root:root /opt/ahost/ui.new && chmod -R go-w,a+rX /opt/ahost/ui.new
+  rm -rf /opt/ahost/ui.old; [ -d /opt/ahost/ui ] && mv /opt/ahost/ui /opt/ahost/ui.old
+  mv /opt/ahost/ui.new /opt/ahost/ui
+  rm -rf "$build"
+fi
+
 echo "== launchers"
 install -o root -g root -m 0755 "$src/deploy/ahost-helper" /usr/local/sbin/ahost-helper
 rm -f /usr/local/bin/ahost
@@ -76,6 +92,7 @@ install -o root -g root -m 0440 "$src/deploy/sudoers" /etc/sudoers.d/ahost
 echo "== /etc/ahost"
 install -d -o root -g root -m 0755 /etc/ahost /etc/ahost/apps
 install -d -o root -g ahost -m 0750 /var/lib/ahost
+install -d -o ahost -g ahost -m 0700 /var/lib/ahost/ui
 if [ -n "$config" ]; then install -o root -g root -m 0644 "$config" /etc/ahost/ahost.toml; fi
 [ -f /etc/ahost/ahost.toml ] || { echo "no /etc/ahost/ahost.toml; pass --config" >&2; exit 1; }
 for f in legacy.allow root.allow; do [ -f /etc/ahost/$f ] || install -o root -g root -m 0644 /dev/null /etc/ahost/$f; done
@@ -98,6 +115,20 @@ fi
 echo "== shared files (template units, nginx common + catch-all)"
 /usr/local/sbin/ahost-helper install
 
+echo "== dashboard service"
+install -o root -g root -m 0644 "$src/deploy/ahost.service" /etc/systemd/system/ahost.service
+systemctl daemon-reload
+systemctl enable ahost.service >/dev/null 2>&1
+systemctl restart ahost.service
+ui_domain=$(/opt/ahost/venv/bin/python -I -c 'from ahost.config import load; print(load().ui.domain or "")')
+if [ -n "$ui_domain" ]; then
+  echo "== dashboard site https://$ui_domain (nginx + certificate)"
+  /usr/local/sbin/ahost-helper ui-site
+fi
+
 echo
 echo "installed AHost $(cat /opt/ahost/REVISION | cut -c1-8). Try: ahost status"
+if [ -n "${ui_domain:-}" ] && [ -z "$(sudo -u ahost /opt/ahost/venv/bin/python -I -m ahost.cli user list 2>/dev/null)" ]; then
+  echo "create your dashboard login:  sudo -u ahost ahost user add <name>"
+fi
 [ -n "$op_user" ] && echo "note: log out and back in (or 'newgrp ahost') for $op_user's new group membership."

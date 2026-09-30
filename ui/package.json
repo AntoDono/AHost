@@ -1,0 +1,19 @@
+{
+  "name": "ahost-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun nuxt dev --port 3900",
+    "generate": "bun --bun nuxt generate",
+    "typecheck": "bun --bun nuxt typecheck",
+    "postinstall": "bun --bun nuxt prepare"
+  },
+  "dependencies": {
+    "@iconify-json/lucide": "^1.2.138",
+    "@iconify-json/simple-icons": "^1.2.98",
+    "@nuxt/ui": "^4.11.2",
+    "nuxt": "^4.5.2",
+    "oxc-parser": "^0.152.0",
+    "tailwindcss": "^4.3.3"
+  }
+}

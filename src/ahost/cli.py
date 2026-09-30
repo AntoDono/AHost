@@ -267,7 +267,7 @@ def adopt(name: str, config: ConfigOpt = None,
     if not yes and not typer.confirm(f"Stop {a.legacy.unit} and switch {name} to AHost now?"):
         raise typer.Exit(1)
     done: list[str] = []
-    h = lambda *args: ops.helper(*args, say=_say)  # noqa: E731
+    h = lambda *args: ops.helper(*args, say=_say)
     try:
         h("legacy-unit", "stop", name); done.append("legacy-stopped")
         h("legacy-unit", "disable", name); done.append("legacy-disabled")

@@ -51,7 +51,7 @@ def env(tmp_path, monkeypatch):
 
     def fake_sh(*args, check=True):
         calls.append(args)
-        class R:  # noqa: N801
+        class R:
             returncode = 0 if (args[:2] != ("nginx", "-t") or state["nginx_ok"]) else 1
             stdout = ""
             stderr = "" if returncode == 0 else "nginx: [emerg] test failure"
@@ -62,7 +62,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "sh", fake_sh)
     monkeypatch.setattr(helper.os, "chown", lambda *a: None)
     monkeypatch.setattr(helper.syslog, "syslog", lambda *a: None)
-    monkeypatch.setattr("ahost.ports.listening_ports", lambda: {})
+    monkeypatch.setattr("ahost.ports.listening_ports", dict)
     return cfg, calls, state, enabled
 
 

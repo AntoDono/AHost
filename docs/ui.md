@@ -15,9 +15,13 @@
 ```bash
 cd ui
 bun install
-bun run dev         # proxies /api to the dev API
+bun run dev         # proxies /api to the dev API on 127.0.0.1:9900
 bun run generate    # -> .output/public, served by ahost
 ```
+
+Scripts run Nuxt on Bun's runtime (`bun --bun nuxt ...`): Nuxt 4's tooling `require()`s ES modules, which Node only
+supports from 22.12. `deploy/install.sh` builds the UI as the invoking user and installs only the static output
+(root-owned) to `/opt/ahost/ui`.
 
 ## Pages
 

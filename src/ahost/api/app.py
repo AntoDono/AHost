@@ -42,7 +42,7 @@ class ManifestText(BaseModel):
 
 def _inline_script_hashes(index_html: str) -> list[str]:
     out = []
-    for m in re.finditer(r"<script(?![^>]*\bsrc=)(?![^>]*type=\"application/json\")[^>]*>(.*?)</script>", index_html, re.S):
+    for m in re.finditer(r"<script(?![^>]*\bsrc=)(?![^>]*type=\"application/json\")[^>]*>(.*?)</script>", index_html, re.DOTALL):
         digest = base64.b64encode(hashlib.sha256(m.group(1).encode()).digest()).decode()
         out.append(f"'sha256-{digest}'")
     return out
