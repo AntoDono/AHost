@@ -56,7 +56,8 @@ class Certs(_S):
 
 class Dns(_S):
     provider: str = "none"
-    static_hosts: list[str] = []
+    static_hosts: list[str] = []  # names ddclient keeps updating that aren't AHost apps (vpn, games, ...)
+    ddclient_conf: str = "/etc/ddclient/ddclient.conf"
 
 
 class Gpu(_S):
@@ -64,6 +65,7 @@ class Gpu(_S):
 
 
 class Ui(_S):
+    domain: str | None = None  # public name for the dashboard, e.g. host.example.com
     bind: str = "127.0.0.1:9900"
     session_hours: int = 12
     totp: str = "optional"

@@ -318,6 +318,114 @@ def v_install(cfg: Config) -> dict:
     return {"changed": changed}
 
 
+# ---------------------------------------------------------------- ddclient
+def _ddclient_desired(cfg: Config) -> set[str]:
+    apps, _ = load_all(Path(cfg.paths.apps_dir))
+    hosts = {d for a in apps.values() for d in a.domains} | set(cfg.dns.static_hosts)
+    if cfg.ui.domain:
+        hosts.add(cfg.ui.domain)
+    return hosts
+
+
+def v_ddclient(cfg: Config, mode: str) -> dict:
+    """plan: show host changes. apply: rewrite host lines (credentials untouched), restart ddclient."""
+    from . import ddclient
+    if cfg.dns.provider != "ddclient":
+        raise HelperError("dns.provider is not 'ddclient'")
+    conf = Path(cfg.dns.ddclient_conf)
+    text = conf.read_text()
+    plan = ddclient.sync(text, _ddclient_desired(cfg))
+    result = {"added": plan.added, "removed": plan.removed, "unplaceable": plan.unplaceable,
+              "changed": plan.changed}
+    if mode == "plan" or not plan.changed:
+        return result
+    if mode != "apply":
+        raise HelperError("usage: ddclient <plan|apply>")
+    st = conf.stat()
+    backup = conf.with_name(f"{conf.name}.ahost-bak")
+    backup.write_text(text)
+    os.chmod(backup, 0o600)
+    tmp = conf.with_name(f".{conf.name}.ahost-tmp")
+    tmp.write_text(plan.new_text)
+    os.chown(tmp, st.st_uid, st.st_gid)
+    os.chmod(tmp, st.st_mode & 0o777)
+    os.replace(tmp, conf)
+    r = sh("systemctl", "restart", "ddclient", check=False)
+    if r.returncode != 0:
+        os.replace(backup, conf)
+        sh("systemctl", "restart", "ddclient", check=False)
+        raise HelperError(f"ddclient failed to restart with the new host list; restored: {r.stderr.strip()}")
+    log(f"ddclient apply added={plan.added} removed={plan.removed}")
+    result["backup"] = str(backup)
+    return result
+
+
+# ---------------------------------------------------------------- UI site
+def _ui_app(cfg: Config) -> App:
+    host, _, port = cfg.ui.bind.rpartition(":")
+    if host not in ("127.0.0.1", "localhost") or not port.isdigit():
+        raise HelperError("ui.bind must be 127.0.0.1:<port>")
+    if not cfg.ui.domain:
+        raise HelperError("ui.domain is not set in the config")
+    return App.model_validate({
+        "name": "ahost-ui", "workdir": "/opt/ahost", "domains": [cfg.ui.domain],
+        "processes": {"main": {"command": "ahost serve", "port": int(port)}},
+        "routes": [{"path": "/", "to": "main", "streaming": True, "websocket": True, "timeout": "1h"}],
+        "proxy": {"max_body": "5m"},
+    })
+
+
+def v_ui_site(cfg: Config) -> dict:
+    """nginx site (+ certificate) for the dashboard. The dashboard itself is ahost.service, not an ahost@ app."""
+    app = _ui_app(cfg)
+    port = app.processes["main"].port
+    legacy = host.legacy_server_names(cfg)
+    if cfg.ui.domain in legacy:
+        raise HelperError(f"{cfg.ui.domain} is already served by legacy site {legacy[cfg.ui.domain]}")
+    Path(cfg.nginx.log_dir).mkdir(parents=True, exist_ok=True)
+    Path(cfg.certs.webroot).mkdir(parents=True, exist_ok=True)
+    facts = render.Facts(certs_present=host.certs_present(cfg), manifest_path="/etc/ahost/ahost.toml [ui]")
+    path = f"{cfg.nginx.sites_dir}/ahost-ui.conf"
+    issued = False
+    # Until the certificate exists, port 80 only answers ACME challenges and returns 503: never serve the login
+    # page over plain HTTP.
+    pre_cert = app.model_copy(update={"routes": [app.routes[0].model_copy(update={"to": None, "status": 503,
+                                                                                    "websocket": False,
+                                                                                    "streaming": False,
+                                                                                    "timeout": None})]})
+    for _ in range(2):
+        site = render.render_site(app if "ahost-ui" in facts.certs_present else pre_cert, {"main": port}, cfg, facts)
+        old = Path(path).read_text() if Path(path).exists() else None
+        if write_atomic(path, site.content, 0o644):
+            _nginx_test_or_restore({path: old}, {})
+            sh("systemctl", "reload", "nginx")
+        if "ahost-ui" in facts.certs_present:
+            break
+        args = ["certbot", "certonly", "--non-interactive", "--agree-tos", "--webroot", "-w", cfg.certs.webroot,
+                "--cert-name", "ahost-ui", "-d", cfg.ui.domain, "--deploy-hook", "systemctl reload nginx"]
+        args += ["-m", cfg.certs.email] if cfg.certs.email else ["--register-unsafely-without-email"]
+        sh(*args)
+        issued = True
+        facts.certs_present.add("ahost-ui")
+    log(f"ui-site domain={cfg.ui.domain} issued={issued}")
+    return {"domain": cfg.ui.domain, "cert_issued": issued}
+
+
+# ---------------------------------------------------------------- nginx logs (read-only)
+def v_nginx_log(cfg: Config, name: str, kind: str, lines: str) -> dict:
+    if not NAME_RE.match(name) and name != "ahost-ui":
+        raise HelperError("invalid app name")
+    if kind not in ("access", "error"):
+        raise HelperError("kind must be access or error")
+    if not lines.isdigit() or not (1 <= int(lines) <= 5000):
+        raise HelperError("lines must be 1..5000")
+    path = Path(cfg.nginx.log_dir) / f"{name}.{kind}.log"
+    if not path.exists():
+        return {"lines": []}
+    r = sh("tail", "-n", lines, str(path))
+    return {"lines": r.stdout.splitlines()}
+
+
 VERBS = {
     "install": (0, lambda c, a: v_install(c)),
     "apply-unit": (1, lambda c, a: v_apply_unit(c, a[0])),
@@ -328,6 +436,9 @@ VERBS = {
     "legacy-unit": (2, lambda c, a: v_legacy_unit(c, a[0], a[1])),
     "cert": (1, lambda c, a: v_cert(c, a[0])),
     "remove": (1, lambda c, a: v_remove(c, a[0])),
+    "ddclient": (1, lambda c, a: v_ddclient(c, a[0])),
+    "ui-site": (0, lambda c, a: v_ui_site(c)),
+    "nginx-log": (3, lambda c, a: v_nginx_log(c, a[0], a[1], a[2])),
 }
 
 

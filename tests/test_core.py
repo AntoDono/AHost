@@ -235,7 +235,7 @@ def test_parsers():
 
 
 def test_compare_baselines_allows_added_https_redirect():
-    from ahost.cli import compare_baselines
+    from ahost.ops import compare_baselines
     prev = {"http a /": {"status": 200, "sha": "x", "type": "text/html"},
             "https a /": {"status": 404, "sha": "y", "type": "text/html"}}
     assert compare_baselines(prev, {"http a /": {"status": 301, "sha": "z", "type": "text/html"},
