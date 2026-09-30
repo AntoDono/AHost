@@ -64,15 +64,29 @@ def certs_present(cfg: Config) -> set[str]:
 
 
 def cert_domains(cfg: Config, name: str) -> set[str] | None:
-    """Domains a certbot cert covers, from its renewal config. None when unknown (only webroot certs list them)."""
+    """Domains a certbot cert covers, or None when unknown.
+
+    The certificate itself is authoritative (readable by root, so the helper sees it). Unprivileged callers fall back
+    to the renewal config's [[webroot_map]], which only lists the domains validated at the last issue: when Let's
+    Encrypt reuses a recent validation the map is empty, so an empty map means unknown, not "no domains".
+    """
+    pem = Path(cfg.certs.live_dir) / name / "cert.pem"
+    try:
+        if pem.is_file():
+            r = run("openssl", "x509", "-noout", "-ext", "subjectAltName", "-in", str(pem))
+            found = set(re.findall(r"DNS:([^,\s]+)", r.stdout)) if r.returncode == 0 else set()
+            if found:
+                return found
+    except OSError:  # live/ is root-only
+        pass
     try:
         text = (Path(cfg.certs.live_dir).parent / "renewal" / f"{name}.conf").read_text()
     except OSError:
         return None
-    _, sep, rest = text.partition("[[webroot_map]]")
-    if not sep:
-        return None
-    return {m.group(1) for m in re.finditer(r"^\s*([A-Za-z0-9.*-]+)\s*=", rest, re.MULTILINE)}
+    rest = text.partition("[[webroot_map]]")[2]
+    section = re.split(r"^\s*\[", rest, maxsplit=1, flags=re.MULTILINE)[0]
+    found = {m.group(1) for m in re.finditer(r"^\s*([A-Za-z0-9.*-]+)\s*=", section, re.MULTILINE)}
+    return found or None
 
 
 def usable_certs(cfg: Config, wanted: dict[str, list[str]]) -> set[str]:

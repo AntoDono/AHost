@@ -132,3 +132,17 @@ def test_allowed_path(env):
     for bad in ("/etc/shadow", f"{cfg.paths.etc_dir}/apps/../../x", f"{cfg.paths.systemd_dir}/sshd.service"):
         with pytest.raises(helper.HelperError):
             helper._allowed_path(cfg, bad)
+
+
+def test_certbot_refuses_recent_reissue(tmp_path, monkeypatch):
+    from ahost import helper
+    from ahost.config import Config
+    cfg = Config.model_validate({"certs": {"live_dir": str(tmp_path / "live"), "webroot": str(tmp_path / "w")}})
+    (tmp_path / "renewal").mkdir()
+    (tmp_path / "renewal/fresh.conf").write_text("[[webroot_map]]\nold.example.com = /w\n")
+    calls = []
+    monkeypatch.setattr(helper, "sh", lambda *a, **k: calls.append(a))
+    with pytest.raises(helper.HelperError, match="less than a day ago"):
+        helper.certbot(cfg, "fresh", ["new.example.com"])
+    helper.certbot(cfg, "brand-new", ["new.example.com"])
+    assert calls and calls[0][:2] == ("certbot", "certonly") and "brand-new" in calls[0]

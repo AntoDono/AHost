@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import syslog
+import time
 from pathlib import Path
 
 from . import host, policy, render
@@ -107,6 +108,28 @@ def _allowed_path(cfg: Config, path: str) -> None:
     prefixes = (f"{cfg.paths.etc_dir}/apps/", f"{cfg.paths.systemd_dir}/ahost@", f"{cfg.nginx.sites_dir}/")
     if norm != path or ".." in path.split("/") or not norm.startswith(prefixes):
         raise HelperError(f"refusing to write outside AHost directories: {path}")
+
+
+# ---------------------------------------------------------------- certificates
+REISSUE_GUARD_S = 86400
+
+
+def certbot(cfg: Config, cert: str, domains: list[str]) -> None:
+    """Issue (or re-issue for a new domain set) a webroot cert. Refuses to re-request a cert issued in the last day:
+    Let's Encrypt allows 5 identical certificates a week, so a wrong "doesn't cover" verdict must fail loudly
+    instead of burning that budget on every apply."""
+    renewal = Path(cfg.certs.live_dir).parent / "renewal" / f"{cert}.conf"
+    if renewal.exists() and time.time() - renewal.stat().st_mtime < REISSUE_GUARD_S:
+        have = host.cert_domains(cfg, cert)
+        raise HelperError(f"certificate {cert!r} was issued less than a day ago but doesn't seem to cover "
+                          f"{', '.join(domains)} (it has {sorted(have) if have else 'unknown domains'}); not asking "
+                          "Let's Encrypt again. Check `sudo certbot certificates`.")
+    args = ["certbot", "certonly", "--non-interactive", "--agree-tos", "--webroot", "-w", cfg.certs.webroot,
+            "--cert-name", cert, "--deploy-hook", "systemctl reload nginx"]
+    args += ["-m", cfg.certs.email] if cfg.certs.email else ["--register-unsafely-without-email"]
+    for d in domains:
+        args += ["-d", d]
+    sh(*args)
 
 
 # ---------------------------------------------------------------- verbs
@@ -255,15 +278,7 @@ def v_cert(cfg: Config, name: str) -> dict:
     for cert, domains in app.cert_groups().items():
         if cert not in missing:
             continue
-        args = ["certbot", "certonly", "--non-interactive", "--agree-tos", "--webroot", "-w", cfg.certs.webroot,
-                "--cert-name", cert, "--deploy-hook", "systemctl reload nginx"]
-        if cfg.certs.email:
-            args += ["-m", cfg.certs.email]
-        else:
-            args += ["--register-unsafely-without-email"]
-        for d in domains:
-            args += ["-d", d]
-        sh(*args)
+        certbot(cfg, cert, domains)
         issued.append(cert)
     log(f"cert app={name} issued={issued}")
     return {"issued": issued}
@@ -371,10 +386,7 @@ def v_apply_router(cfg: Config, name: str) -> dict:
             sh("systemctl", "reload", "nginx")
         if router.cert_name in facts.certs_present:
             break
-        args = ["certbot", "certonly", "--non-interactive", "--agree-tos", "--webroot", "-w", cfg.certs.webroot,
-                "--cert-name", router.cert_name, "-d", router.domain, "--deploy-hook", "systemctl reload nginx"]
-        args += ["-m", cfg.certs.email] if cfg.certs.email else ["--register-unsafely-without-email"]
-        sh(*args)
+        certbot(cfg, router.cert_name, [router.domain])
         issued = True
         facts.certs_present.add(router.cert_name)
     log(f"apply-router router={name} changed={changed} issued={issued}")
@@ -482,10 +494,7 @@ def v_ui_site(cfg: Config) -> dict:
             sh("systemctl", "reload", "nginx")
         if "ahost-ui" in facts.certs_present:
             break
-        args = ["certbot", "certonly", "--non-interactive", "--agree-tos", "--webroot", "-w", cfg.certs.webroot,
-                "--cert-name", "ahost-ui", "-d", cfg.ui.domain, "--deploy-hook", "systemctl reload nginx"]
-        args += ["-m", cfg.certs.email] if cfg.certs.email else ["--register-unsafely-without-email"]
-        sh(*args)
+        certbot(cfg, "ahost-ui", [cfg.ui.domain])
         issued = True
         facts.certs_present.add("ahost-ui")
     log(f"ui-site domain={cfg.ui.domain} issued={issued}")

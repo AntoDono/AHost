@@ -131,6 +131,12 @@ def test_cert_must_cover_domains(tmp_path):
     ren.mkdir(parents=True)
     (ren / "ui.conf").write_text("[renewalparams]\nauthenticator = webroot\n[[webroot_map]]\nold.example.com = /w\n")
     (ren / "legacy.conf").write_text("[renewalparams]\nauthenticator = nginx\n")
+    # validation reused: empty map, then another section; must read as unknown, not as "no domains"
+    (ren / "reused.conf").write_text("[[webroot_map]]\n[acme_renewal_info]\nari_retry_after = 2026-09-30\n")
+    assert host.cert_domains(cfg, "reused") is None
+    assert host.usable_certs(cfg, {"reused": ["x.example.com"]}) == {"reused"}
+    (ren / "two.conf").write_text("[[webroot_map]]\na.example.com = /w\n[acme_renewal_info]\nari_retry_after = x\n")
+    assert host.cert_domains(cfg, "two") == {"a.example.com"}
     assert host.cert_domains(cfg, "ui") == {"old.example.com"}
     assert host.cert_domains(cfg, "legacy") is None
     assert host.usable_certs(cfg, {"ui": ["old.example.com"]}) == {"ui"}
