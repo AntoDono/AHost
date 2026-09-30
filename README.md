@@ -4,6 +4,8 @@
 runs it: a systemd service, an nginx site with HTTPS, a port from a registry, GPU assignment, optional
 sandboxing, and a web dashboard to start, stop, restart, and read logs.
 
+![The AHost rack: every app as a routing strip, domain to port to service to GPU](docs/images/rack.png)
+
 It's built for the "one beefy box, many projects" setup (a GPU server, a homelab, a small VPS) where apps run
 as plain processes in their own venv, uv, conda or Node environment, **not** in Docker, and where the
 hand-written unit + nginx site + certbot routine has stopped scaling.
@@ -66,6 +68,19 @@ ahost logs blog-api -f
 More examples: [`examples/apps/`](examples/apps/): a static site, a GPU inference server, a multi-process app.
 
 ## Dashboard
+
+| | |
+|---|---|
+| ![Live logs for one app](docs/images/app-logs.png) | ![System: load per CPU thread, the processes on a thread, GPUs by app](docs/images/system.png) |
+| **Logs** per app: live output, nginx requests and errors, filters, since last restart | **System**: load on every CPU thread (click one to see its processes) and GPU memory by app |
+| ![New hosting form with a live plan preview](docs/images/new-hosting.png) | ![Dark mode](docs/images/rack-dark.png) |
+| **New hosting**: a form with a live preview of exactly what Apply will do | Light and dark themes |
+
+<p align="center"><img src="docs/images/landing.png" width="49%" alt="Public landing page"> <img src="docs/images/mobile.png" width="22%" alt="Rack on a phone"></p>
+
+Screenshots come from `tools/demo_server.py`, which runs the real dashboard against a fictional server
+(`uv run python tools/demo_server.py`, then sign in as `demo` / `demo-password-123`). Regenerate them with
+`uv run --with playwright python tools/screenshots.py`.
 
 `ahost.service` runs the API and serves the dashboard on `ui.bind` (127.0.0.1). With `ui.domain` set, the installer
 creates its nginx site and certificate (`ahost ui-site`). There's a password login (argon2), no default account:

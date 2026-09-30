@@ -61,6 +61,8 @@ function heat(p: number) {
   if (p < 75) return `color-mix(in srgb, var(--ah-signal) ${40 + (p - 40) * 1.5}%, var(--ah-panel))`
   return `color-mix(in srgb, var(--ah-fault) ${55 + (p - 75) * 1.8}%, var(--ah-signal))`
 }
+// text on the heat color: white on mid/dark blue and on red, dark on pale cells and on amber (amber is too light for white)
+function light(p: number) { return (p >= 28 && p < 40) || p >= 75 }
 const memPct = computed(() => sys.value ? Math.round(100 * (1 - sys.value.mem_available / sys.value.mem_total)) : 0)
 const diskPct = computed(() => sys.value ? Math.round(100 * sys.value.disk_used / sys.value.disk_total) : 0)
 const appNames = computed(() => (overview.value?.apps ?? []).map(a => a.name))
@@ -117,8 +119,8 @@ const appNames = computed(() => (overview.value?.apps ?? []).map(a => a.name))
             :aria-label="`CPU ${c.id}: ${Math.round(c.pct)}% busy`"
             @click="select(c.id)"
           >
-            <span class="data text-[0.8rem] font-medium" :class="c.pct >= 60 ? 'text-white' : 'text-highlighted'">{{ Math.round(c.pct) }}</span>
-            <span class="data text-[0.62rem]" :class="c.pct >= 60 ? 'text-white/80' : 'text-dimmed'">cpu{{ c.id }}</span>
+            <span class="data text-[0.8rem] font-medium" :class="light(c.pct) ? 'text-white' : 'text-[#1b232c]'">{{ Math.round(c.pct) }}</span>
+            <span class="data text-[0.62rem]" :class="light(c.pct) ? 'text-white/85' : 'text-[#1b232c]/60'">cpu{{ c.id }}</span>
           </button>
           <span class="data text-[0.62rem] text-dimmed text-center">core {{ col[0].core }}</span>
         </div>

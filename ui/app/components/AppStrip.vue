@@ -62,7 +62,7 @@ function onClick(e: MouseEvent) {
       </div>
 
       <!-- vitals + controls -->
-      <div class="flex items-center gap-3 justify-between lg:justify-end">
+      <div class="flex items-center gap-3 justify-between lg:justify-end lg:pl-3">
         <div class="flex items-center gap-3 data text-xs text-muted">
           <UTooltip v-if="health" :text="health.ok ? `GET ${health.path} → ${health.status}` : (health.detail || `GET ${health.path} → ${health.status}`)">
             <span :class="health.ok ? '' : 'text-[var(--ah-fault)]'">{{ health.ok ? `${health.ms} ms` : 'no reply' }}</span>
