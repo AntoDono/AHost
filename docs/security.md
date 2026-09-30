@@ -19,8 +19,10 @@ AHost can start processes, write system config and reload nginx, so it's effecti
   ```
   ahost ALL=(root) NOPASSWD: /usr/local/sbin/ahost-helper
   ```
-- The helper and everything it imports are root-owned (`/usr/local/sbin`, `/usr/local/lib/ahost-helper/`), so `ahost`
-  can't change what runs as root.
+- The helper and everything it imports are root-owned (`/usr/local/sbin/ahost-helper`, `/opt/ahost/`), so neither `ahost`
+  nor any app can change what runs as root. The runtime is built by uv with root's own Python install dir and cache
+  (`UV_PYTHON_INSTALL_DIR=/opt/ahost/python`, `UV_CACHE_DIR=/var/cache/ahost-uv`). A user's uv cache or uv-managed
+  Python would let that user poison what root executes.
 
 ## The helper renders; it never writes supplied content
 

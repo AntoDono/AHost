@@ -4,8 +4,8 @@
 
 | Component | Runs as | Role |
 |---|---|---|
-| `ahost` (FastAPI + CLI) | `ahost` system user | reads manifests, computes plans, serves the API and UI, streams logs/status |
-| `ahost-helper` | root, via one sudoers rule for user `ahost` | renders and installs generated files, runs systemctl/nginx/certbot/ddclient. Fixed verbs only. See [security.md](security.md) |
+| `ahost` (FastAPI + CLI, uv project) | `ahost` system user, from `/opt/ahost/venv` | reads manifests, computes plans, serves the API and UI, streams logs/status |
+| `ahost-helper` | root, via one sudoers rule for user `ahost`; runs from root-owned `/opt/ahost/venv` | renders and installs generated files, runs systemctl/nginx/certbot/ddclient. Fixed verbs only. See [security.md](security.md) |
 | `ahost@.service` / `ahost@.target` | systemd templates | one instance per app (or per process of a multi-process app) |
 | `/usr/local/lib/ahost/run` | inside each unit | sets up the runtime (venv/uv/conda/node) and `exec`s the app command |
 | nginx | as installed | serves `/etc/nginx/ahost.d/*.conf` next to any existing sites |

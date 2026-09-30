@@ -101,8 +101,34 @@ tests/        reconciler plan tests against fixture manifests (no root needed)
 
 ## Requirements
 
-Linux with systemd ≥ 249 and cgroup v2, nginx, certbot, Python ≥ 3.12 with uv, Bun (UI build only).
-NVIDIA driver for GPU features. Tested target: Ubuntu 22.04.
+Linux with systemd ≥ 249 and cgroup v2, nginx, certbot, [uv](https://docs.astral.sh/uv/), Bun (UI build only).
+NVIDIA driver for GPU features. Tested target: Ubuntu 22.04. uv provides Python 3.12, so the system Python version doesn't matter.
+
+## Development
+
+All Python is managed with **uv**: `pyproject.toml` + `uv.lock`, Python pinned in `.python-version`.
+
+```bash
+uv sync                 # create .venv from uv.lock
+uv run ahost plan       # read-only: works without root
+uv run pytest
+uv add <package>        # never pip install
+```
+
+## Installation layout
+
+The installed service and the root helper **never run from a user-writable checkout**. Apps run as a normal user,
+so if AHost ran from that user's home, any compromised app could modify the code that runs as root.
+`deploy/install.sh` (run with sudo) builds a root-owned copy with uv, using root's own Python and cache:
+
+```
+/opt/ahost/python/     uv-managed CPython   (UV_PYTHON_INSTALL_DIR)
+/opt/ahost/venv/       runtime venv, installed --frozen from uv.lock
+/var/cache/ahost-uv/   root's uv cache      (UV_CACHE_DIR), never a user's cache
+/usr/local/sbin/ahost-helper   root-owned launcher → /opt/ahost/venv/bin/python -m ahost.helper
+```
+
+`ahost.service` runs `/opt/ahost/venv/bin/ahost serve` as the `ahost` user. To upgrade, review the diff and re-run the install.
 
 ## Why not Coolify / Dokploy / CapRover?
 
