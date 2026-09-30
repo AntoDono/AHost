@@ -85,36 +85,63 @@ def validate(names: Annotated[list[str] | None, typer.Argument()] = None, config
     raise typer.Exit(1 if bad else 0)
 
 
+JsonOpt = Annotated[bool, typer.Option("--json", help="machine-readable output")]
+
+
 @app.command()
 def plan(names: Annotated[list[str] | None, typer.Argument()] = None, config: ConfigOpt = None,
-         no_diff: Annotated[bool, typer.Option("--no-diff")] = False):
-    """Show what `apply` would change. Read-only."""
+         no_diff: Annotated[bool, typer.Option("--no-diff")] = False, as_json: JsonOpt = False):
+    """Show what `apply` would change. Read-only. Exit code 1 if any plan has errors."""
     cfg = _cfg(config)
     apps = _apps(cfg)
+    out, bad = [], False
     for name in names or sorted(apps):
         a = apps.get(name) or _one(cfg, name)
         pl = make_plan(a, cfg, apps, str(Path(cfg.paths.apps_dir) / f"{name}.toml"))
-        typer.echo(format_plan(pl, show_diffs=not no_diff))
-        typer.echo()
+        bad |= bool(pl.errors)
+        if as_json:
+            out.append({"app": name, "ok": not pl.errors, "errors": pl.errors, "warnings": pl.warnings,
+                        "ports": pl.ports, "steps": pl.steps, "changed": pl.changed,
+                        "files": [{"path": f.path, "kind": f.kind, "status": f.status} for f in pl.files]})
+        else:
+            typer.echo(format_plan(pl, show_diffs=not no_diff))
+            typer.echo()
+    if as_json:
+        typer.echo(json.dumps(out, indent=2))
+    raise typer.Exit(1 if bad else 0)
 
 
 @app.command()
-def status(config: ConfigOpt = None):
-    """All apps: systemd state, ports, domains."""
+def status(config: ConfigOpt = None, as_json: JsonOpt = False):
+    """All apps: systemd state, ports, domains, router paths."""
     cfg = _cfg(config)
     apps = _apps(cfg)
     reg = open_registry(cfg)
+    mounts: dict[str, list[str]] = {}
+    for r in _routers(cfg).values():
+        for e in r.entries:
+            if e.app:
+                mounts.setdefault(e.app, []).append(f"{r.domain}{e.path}/")
+    rows = []
     for name, a in sorted(apps.items()):
         for pid in a.processes:
             unit = a.unit(pid)
             st = host.unit_props(unit, "ActiveState", "UnitFileState")
-            port = reg.get(name, pid) or a.processes[pid].port
+            pinned = a.processes[pid].port
+            port = reg.get(name, pid) or (pinned if isinstance(pinned, int) else None)
+            if as_json:
+                rows.append({"app": name, "process": pid, "unit": unit, "active": st.get("ActiveState"),
+                             "enabled": st.get("UnitFileState"), "port": port, "domains": a.domains,
+                             "router_paths": mounts.get(name, [])})
+                continue
             legacy = ""
             if a.legacy and a.legacy.unit:
                 ls = host.unit_props(a.legacy.unit, "ActiveState").get("ActiveState")
                 legacy = f"  legacy {a.legacy.unit}: {ls}"
             typer.echo(f"{unit:<40} {st.get('ActiveState', '?'):<9} {st.get('UnitFileState', '?'):<9} "
-                       f":{port or '-':<6} {' '.join(a.domains)}{legacy}")
+                       f":{port or '-':<6} {' '.join(a.domains + mounts.get(name, []))}{legacy}")
+    if as_json:
+        typer.echo(json.dumps(rows, indent=2))
 
 
 @app.command()
@@ -361,6 +388,17 @@ def ui_site(config: ConfigOpt = None):
 
 
 @app.command()
+def guide():
+    """Print the guide for AI agents and scripts: how to host an app with this CLI."""
+    from importlib import resources
+    try:
+        text = resources.files("ahost").joinpath("guide.md").read_text()
+    except (FileNotFoundError, OSError):  # running from a source checkout
+        text = (Path(__file__).resolve().parents[2] / "docs/agents.md").read_text()
+    typer.echo(text)
+
+
+@app.command()
 def serve(config: ConfigOpt = None):
     """Run the web dashboard (normally started by ahost.service)."""
     import uvicorn
@@ -428,9 +466,12 @@ def _routers(cfg: Config):
 
 
 @router_app.command("list")
-def router_list(config: ConfigOpt = None):
+def router_list(config: ConfigOpt = None, as_json: JsonOpt = False):
     """Routers and their paths."""
     cfg = _cfg(config)
+    if as_json:
+        typer.echo(json.dumps([r.model_dump() for r in _routers(cfg).values()], indent=2))
+        return
     for r in _routers(cfg).values():
         typer.secho(f"{r.name}  https://{r.domain}" + (f"  (/ -> {r.index}/)" if r.index else ""), bold=True)
         for e in r.entries:
@@ -468,6 +509,111 @@ def router_apply(name: str, config: ConfigOpt = None):
     except ops.OpError as e:
         _fail(e)
     typer.secho(f"router {name} applied", fg="green")
+
+
+NoApplyOpt = Annotated[bool, typer.Option("--no-apply", help="only edit the router file; apply later")]
+
+
+def _edit_router(cfg: Config, name: str, edit, no_apply: bool) -> None:
+    """Change a router file, validate it, then apply (a failed apply puts the old file back)."""
+    from .manifest_io import write_router
+    from .models import Router
+    routers = _routers(cfg)
+    if name not in routers:
+        _fail(ValueError(f"no router {name!r} (see `ahost router list`)"))
+    old = routers[name]
+    new = old.model_copy(deep=True)
+    try:
+        edit(new)
+        new = Router.model_validate(new.model_dump())
+    except ValueError as e:
+        _fail(e)
+    apps = _apps(cfg)
+    missing = [e.app for e in new.entries if e.app and e.app not in apps]
+    if missing:
+        _fail(ValueError(f"no app named {missing[0]!r}"))
+    write_router(Path(cfg.paths.apps_dir), new)
+    if no_apply:
+        typer.secho(f"router {name} saved; run `ahost router apply {name}`", fg="green")
+        return
+    try:
+        ops.apply_router(name, say=_say)
+    except ops.OpError as e:
+        write_router(Path(cfg.paths.apps_dir), old)
+        _fail(e)
+    typer.secho(f"router {name} applied", fg="green")
+
+
+@router_app.command("create")
+def router_create(name: str, domain: str, description: Annotated[str, typer.Option()] = "",
+                  config: ConfigOpt = None, no_apply: NoApplyOpt = False):
+    """New router for DOMAIN (its DNS must point here). Applying it gets the certificate."""
+    from . import policy
+    from .manifest_io import routers_dir, write_router
+    from .models import Router
+    cfg = _cfg(config)
+    try:
+        r = Router(name=name, domain=domain.lower(), description=description)
+    except ValueError as e:
+        _fail(e)
+    if (routers_dir(Path(cfg.paths.apps_dir)) / f"{name}.toml").exists():
+        _fail(ValueError(f"router {name} already exists"))
+    errs = policy.check_router(r, list(_apps(cfg).values()), _routers(cfg), host.legacy_server_names(cfg),
+                               cfg.ui.domain)
+    if errs:
+        _fail(ValueError("; ".join(errs)))
+    write_router(Path(cfg.paths.apps_dir), r)
+    if no_apply:
+        typer.secho(f"router {name} saved; run `ahost router apply {name}`", fg="green")
+        return
+    try:
+        ops.apply_router(name, say=_say)
+    except ops.OpError as e:
+        _fail(e)
+    typer.secho(f"https://{r.domain} ready. Add paths with `ahost router add {name} /path --app APP`.", fg="green")
+
+
+@router_app.command("add")
+def router_add(name: str, path: str, app_name: Annotated[str | None, typer.Option("--app", help="app to point it at; omit to reserve")] = None,
+               no_strip: Annotated[bool, typer.Option("--no-strip", help="pass the prefix through (app is configured for it)")] = False,
+               config: ConfigOpt = None, no_apply: NoApplyOpt = False):
+    """Add PATH to a router, pointed at --app or reserved."""
+    from .models import Entry
+
+    def edit(r):
+        e = Entry(path=path, app=app_name, strip=not no_strip)
+        if r.entry(e.path):
+            raise ValueError(f"{e.path} is already on router {r.name} (use `ahost router assign`)")
+        r.entries.append(e)
+    _edit_router(_cfg(config), name, edit, no_apply)
+
+
+@router_app.command("assign")
+def router_assign(name: str, path: str, app_name: Annotated[str | None, typer.Argument(metavar="APP", help="omit to make the path reserved")] = None,
+                  strip: Annotated[bool | None, typer.Option("--strip/--no-strip", help="change prefix stripping")] = None,
+                  config: ConfigOpt = None, no_apply: NoApplyOpt = False):
+    """Point an existing PATH at APP (or reserve it again when APP is omitted)."""
+    def edit(r):
+        e = r.entry(path)
+        if e is None:
+            raise ValueError(f"{path} is not on router {r.name} (use `ahost router add`)")
+        e.app = app_name
+        if strip is not None:
+            e.strip = strip
+    _edit_router(_cfg(config), name, edit, no_apply)
+
+
+@router_app.command("drop")
+def router_drop(name: str, path: str, config: ConfigOpt = None, no_apply: NoApplyOpt = False):
+    """Remove PATH from a router."""
+    def edit(r):
+        e = r.entry(path)
+        if e is None:
+            raise ValueError(f"{path} is not on router {r.name}")
+        r.entries.remove(e)
+        if r.index == e.path:
+            r.index = None
+    _edit_router(_cfg(config), name, edit, no_apply)
 
 
 @router_app.command("remove")

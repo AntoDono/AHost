@@ -104,7 +104,7 @@ class Config(_S):
 
 
 def load(path: Path | str | None = None) -> Config:
-    p = Path(path) if path else DEFAULT_CONFIG
+    p = Path(path) if path else Path(os.environ.get("AHOST_CONFIG", "/etc/ahost/ahost.toml"))  # read at call time
     if not p.exists():
         raise FileNotFoundError(f"AHost config not found: {p} (set AHOST_CONFIG or pass --config)")
     with p.open("rb") as f:

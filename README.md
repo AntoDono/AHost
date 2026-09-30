@@ -102,6 +102,8 @@ Rack (live status, start/stop/restart, logs), System, Router, Ports, and New hos
 | [docs/architecture.md](docs/architecture.md) | components, reconcile loop, systemd/nginx/cert/port/GPU/DNS details |
 | [docs/manifest.md](docs/manifest.md) | every manifest field |
 | [docs/routers.md](docs/routers.md) | several apps under one domain by path |
+| [docs/cli.md](docs/cli.md) | every `ahost` command |
+| [docs/agents.md](docs/agents.md) | for AI agents and scripts: recipes and rules (also `ahost guide`) |
 | [docs/security.md](docs/security.md) | threat model, the root helper, UI auth, sandbox levels |
 | [docs/adopting-existing-services.md](docs/adopting-existing-services.md) | migrating hand-written units and nginx sites safely |
 | [docs/ui.md](docs/ui.md) | web UI spec and design direction |
