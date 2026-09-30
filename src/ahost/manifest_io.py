@@ -7,7 +7,7 @@ from pathlib import Path
 
 import tomlkit
 
-from .models import App
+from .models import App, Router
 
 
 def load_app(path: Path) -> App:
@@ -70,3 +70,62 @@ def dumps(data: dict, header: str = "") -> str:
     for k in sorted(data, key=lambda k: ORDER.index(k) if k in ORDER else 99):
         doc[k] = _to_toml(data[k], k)
     return tomlkit.dumps(doc)
+
+
+# ---------------------------------------------------------------- routers
+def routers_dir(apps_dir: Path) -> Path:
+    return Path(apps_dir) / "routers"
+
+
+def load_router(path: Path) -> Router:
+    with path.open("rb") as f:
+        r = Router.model_validate(tomllib.load(f))
+    if r.name != path.stem:
+        raise ValueError(f"{path}: name {r.name!r} must match the file name {path.stem!r}")
+    return r
+
+
+def load_routers(apps_dir: Path) -> tuple[dict[str, Router], dict[str, str]]:
+    out: dict[str, Router] = {}
+    errors: dict[str, str] = {}
+    d = routers_dir(apps_dir)
+    if not d.is_dir():
+        return out, errors
+    for p in sorted(d.glob("*.toml")):
+        if p.name.startswith(("_", ".")):
+            continue
+        try:
+            out[p.stem] = load_router(p)
+        except Exception as e:  # noqa: BLE001 - reported to the user
+            errors[p.stem] = str(e)
+    return out, errors
+
+
+def dump_router(r: Router, header: str = "") -> str:
+    doc = tomlkit.document()
+    for line in (header or "AHost router: https://<domain>/<path> -> app. Edit here or on the Router page.").splitlines():
+        doc.add(tomlkit.comment(line))
+    doc.add(tomlkit.nl())
+    data = r.model_dump(exclude_defaults=True, exclude={"entries"})
+    data["name"], data["domain"] = r.name, r.domain
+    for k in ("name", "domain", "description", "cert", "index", "max_body"):
+        if k in data:
+            doc[k] = data[k]
+    aot = tomlkit.aot()
+    for e in r.entries:
+        t = tomlkit.table()
+        t["path"] = e.path
+        for k, v in e.model_dump(exclude_defaults=True, exclude={"path"}).items():
+            t[k] = v
+        aot.append(t)
+    if r.entries:
+        doc["entries"] = aot
+    return tomlkit.dumps(doc)
+
+
+def write_router(apps_dir: Path, r: Router) -> Path:
+    d = routers_dir(apps_dir)
+    d.mkdir(exist_ok=True)
+    p = d / f"{r.name}.toml"
+    p.write_text(dump_router(r))
+    return p

@@ -10,7 +10,9 @@ const f = reactive({
   name: '', workdir: '', kind: 'app' as 'app' | 'static' | 'both',
   runtime: 'plain' as 'plain' | 'venv' | 'uv' | 'node' | 'conda', venv: '.venv', node: '22', conda: '',
   command: '', portMode: 'auto' as 'auto' | 'fixed', port: 10000,
+  address: 'domain' as 'domain' | 'router' | 'none',
   domains: [''] as string[],
+  router: '', routerPath: '', newPath: '', strip: true,
   websocket: true, streaming: true, timeout: '', maxBody: '',
   statics: [] as { path: string, dir: string, spa: boolean }[],
   gpus: [] as string[],
@@ -22,6 +24,32 @@ const picker = ref(false)
 const detect = ref<Detect | null>(null)
 const preview = ref<Preview | null>(null)
 const dns = ref<Record<string, { points_here: boolean | null, addresses: string[] }>>({})
+const routers = ref<RouterInfo[]>([])
+onMounted(async () => {
+  routers.value = (await api<RoutersView>('/api/routers').catch(() => ({ routers: [] as RouterInfo[] }))).routers
+  if (routers.value.length) f.router = routers.value[0].name
+  // "Host a new app here" from the Router page: ?router=<name>&path=/reserved
+  const q = useRoute().query
+  if (typeof q.router === 'string' && routers.value.some(r => r.name === q.router)) {
+    f.address = 'router'
+    f.router = q.router
+    await nextTick()
+    if (typeof q.path === 'string' && pathItems.value.some(i => i.value === q.path)) f.routerPath = q.path
+  }
+})
+const NEW_PATH = '+'
+const router = computed(() => routers.value.find(r => r.name === f.router))
+// reserved (unassigned) paths can be used as they are; "New path" makes one on the spot
+const pathItems = computed(() => [
+  ...(router.value?.entries.filter(e => !e.app).map(e => ({ label: `${e.path}/ (reserved)`, value: e.path })) ?? []),
+  { label: 'New path…', value: NEW_PATH },
+])
+watch(router, () => { f.routerPath = pathItems.value[0]?.value ?? NEW_PATH })
+const mountPath = computed(() => {
+  if (f.address !== 'router' || !router.value) return ''
+  const p = f.routerPath === NEW_PATH ? (f.newPath.trim() || `/${f.name}`) : f.routerPath
+  return ('/' + p.toLowerCase().replace(/^\/+|\/+$/g, '')).replace(/\/{2,}/g, '/')
+})
 const creating = ref(false)
 const progress = ref<string[]>([])
 
@@ -40,7 +68,9 @@ watch(() => f.workdir, async (p) => {
 
 const body = computed(() => {
   const b: Record<string, unknown> = { name: f.name, workdir: f.workdir }
-  const domains = f.domains.map(d => d.trim().toLowerCase()).filter(Boolean)
+  const domains = f.address === 'domain' ? f.domains.map(d => d.trim().toLowerCase()).filter(Boolean) : []
+  const web = domains.length > 0 || !!mountPath.value
+  if (mountPath.value) b.mount = { router: f.router, path: mountPath.value, strip: f.strip }
   if (domains.length) b.domains = domains
   const env = Object.fromEntries(f.env.filter(e => e.k.trim()).map(e => [e.k.trim(), e.v]))
   if (Object.keys(env).length) b.env = env
@@ -56,11 +86,11 @@ const body = computed(() => {
     if (f.runtime === 'conda') runtime.conda = f.conda
     const proc: Record<string, unknown> = { command: f.command, restart: f.restart }
     if (Object.keys(runtime).length) proc.runtime = runtime
-    if (domains.length || f.health) proc.port = f.portMode === 'auto' ? 'auto' : Number(f.port)
+    if (web || f.health) proc.port = f.portMode === 'auto' ? 'auto' : Number(f.port)
     if (f.gpus.length) proc.gpus = [...f.gpus]
     if (f.health) proc.health = f.health
     b.processes = { main: proc }
-    if (domains.length) {
+    if (web) {
       const r: Record<string, unknown> = { path: '/', to: 'main', websocket: f.websocket, streaming: f.streaming }
       if (f.timeout) r.timeout = f.timeout
       routes.push(r)
@@ -180,7 +210,29 @@ function toggle(list: string[], v: string) { const i = list.indexOf(v); if (i >=
 
         <section class="rounded-lg border border-default bg-[var(--ah-panel)] p-5 space-y-4">
           <h2 class="silk text-sm text-muted">Web</h2>
-          <UFormField label="Domains" help="Point the DNS record at this server first; HTTPS is set up on apply.">
+          <UFormField label="Where people reach it">
+            <URadioGroup v-model="f.address" orientation="horizontal" :items="[
+              { label: 'Its own domain', value: 'domain', description: 'app.example.com' },
+              { label: 'A path on a router', value: 'router', description: routers.length ? `${routers[0].domain}/app` : 'Create a router first', disabled: !routers.length },
+              { label: 'Not on the web', value: 'none', description: 'Workers, bots' },
+            ]" />
+          </UFormField>
+          <div v-if="f.address === 'router' && router" class="grid gap-4 sm:grid-cols-2">
+            <UFormField label="Router">
+              <USelect v-model="f.router" :items="routers.map(r => ({ label: r.domain, value: r.name }))" class="w-full" :ui="{ base: 'font-mono' }" />
+            </UFormField>
+            <UFormField label="Path">
+              <USelect v-model="f.routerPath" :items="pathItems" class="w-full" :ui="{ base: 'font-mono' }" />
+            </UFormField>
+            <UFormField v-if="f.routerPath === NEW_PATH" label="New path">
+              <UInput v-model="f.newPath" :placeholder="`/${f.name || 'app'}`" class="w-full" :ui="{ base: 'font-mono' }" />
+            </UFormField>
+            <div class="sm:col-span-2 flex flex-wrap items-center gap-x-6 gap-y-2">
+              <span class="jack">{{ router.domain }}{{ mountPath }}/</span>
+              <USwitch v-model="f.strip" :label="`Strip ${mountPath}`" :description="f.strip ? 'The app sees / (redirects and cookies are fixed up)' : `The app is set up to live under ${mountPath}`" />
+            </div>
+          </div>
+          <UFormField v-if="f.address === 'domain'" label="Domains" help="Point the DNS record at this server first; HTTPS is set up on apply.">
             <div class="space-y-2">
               <div v-for="(d, i) in f.domains" :key="i" class="flex gap-2 items-center">
                 <UInput v-model="f.domains[i]" placeholder="app.example.com" class="grow" :ui="{ base: 'font-mono' }" @blur="checkDns(f.domains[i])" />
@@ -190,7 +242,7 @@ function toggle(list: string[], v: string) { const i = list.indexOf(v); if (i >=
               <UButton size="xs" variant="ghost" icon="i-lucide-plus" label="Add domain" @click="f.domains.push('')" />
             </div>
           </UFormField>
-          <div v-if="f.kind !== 'static'" class="flex flex-wrap gap-6">
+          <div v-if="f.kind !== 'static' && f.address !== 'none'" class="flex flex-wrap gap-6">
             <USwitch v-model="f.websocket" label="WebSockets" />
             <USwitch v-model="f.streaming" label="Streaming (SSE, LLM tokens)" description="No response buffering" />
           </div>

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import host
 from .config import Config
-from .manifest_io import load_app
+from .manifest_io import load_app, load_routers, write_router
 from .models import App
 from .ports import listening_ports
 
@@ -153,7 +153,23 @@ def apply(name: str, cfg: Config, say: Say = _quiet, interactive: bool = True) -
         if helper("cert", name, say=say, interactive=interactive)["issued"]:
             say("certificate issued")
             helper("apply-site", name, say=say, interactive=interactive)
+    for r in routers_of(name, cfg):  # its port may have changed: refresh every router path that leads to it
+        apply_router(r, say=say, interactive=interactive)
     return {"ports": out["ports"]}
+
+
+def routers_of(app: str, cfg: Config) -> list[str]:
+    routers, _ = load_routers(Path(cfg.paths.apps_dir))
+    return [r.name for r in routers.values() if any(e.app == app for e in r.entries)]
+
+
+def apply_router(name: str, say: Say = _quiet, interactive: bool = True) -> dict:
+    out = helper("apply-router", name, say=say, interactive=interactive)
+    if out.get("cert_issued"):
+        say(f"certificate issued for router {name}")
+    for w in out.get("warnings", []):
+        say(f"router {name}: {w}")
+    return out
 
 
 def lifecycle(name: str, action: str, say: Say = _quiet, interactive: bool = True) -> None:
@@ -167,6 +183,15 @@ def remove(name: str, cfg: Config, say: Say = _quiet, interactive: bool = True) 
     """Remove from hosting: generated files, units, site, port. Keeps the project folder and certificate.
     The manifest moves to <apps_dir>/.deleted/."""
     helper("remove", name, say=say, interactive=interactive)
+    # its router paths stay reserved (unassigned), so the address can be reused
+    routers, _ = load_routers(Path(cfg.paths.apps_dir))
+    for r in routers.values():
+        if any(e.app == name for e in r.entries):
+            for e in r.entries:
+                if e.app == name:
+                    e.app = None
+            write_router(Path(cfg.paths.apps_dir), r)
+            apply_router(r.name, say=say, interactive=interactive)
     src = Path(cfg.paths.apps_dir) / f"{name}.toml"
     dst_dir = Path(cfg.paths.apps_dir) / ".deleted"
     dst_dir.mkdir(exist_ok=True)

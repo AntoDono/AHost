@@ -51,7 +51,8 @@ def _proc(unit, port, cmd, runtime="venv", mem=0, up=0, restarts=0, health=(True
 def _app(name, desc, domains, proc, state="running", gpus=(), user="deploy"):
     return {"name": name, "description": desc, "domains": list(domains), "state": state, "user": user,
             "workdir": f"/home/deploy/projects/{name}", "processes": [proc], "gpus": list(gpus),
-            "sandbox": "standard" if name in ("api", "shop-api") else "none", "legacy": None, "multi": False}
+            "sandbox": "standard" if name in ("api", "shop-api") else "none", "legacy": None, "multi": False,
+            "mounts": []}
 
 
 APPS = [
@@ -88,7 +89,47 @@ OBSERVED = [{"unit": u, "active": "active", "sub": "running", "memory": m * 2**2
                          ("nginx.service", 48))]
 
 
+ROUTERS = {
+    "apps": {"name": "apps", "domain": "apps.example.com", "description": "Internal tools", "index": "/chat",
+             "entries": [{"path": "/chat", "app": "chat-ui"}, {"path": "/asr", "app": "whisper"},
+                         {"path": "/embed", "app": "embedder"}, {"path": "/grafana", "app": "api", "strip": False},
+                         {"path": "/notes"}, {"path": "/wiki"}]},
+    "lab": {"name": "lab", "domain": "lab.example.com", "description": "Experiments",
+            "entries": [{"path": "/img", "app": "image-gen"}, {"path": "/scrape", "app": "scraper"},
+                        {"path": "/playground"}]},
+}
+
+
+def _mounts():
+    out: dict[str, list[str]] = {}
+    for r in ROUTERS.values():
+        for e in r["entries"]:
+            if e.get("app"):
+                out.setdefault(e["app"], []).append(f"{r['domain']}{e['path']}")
+    return out
+
+
+def fake_routers(cfg):
+    from ahost import render
+    from ahost.models import App, Router
+    apps = {a["name"]: App.model_validate({"name": a["name"], "workdir": a["workdir"], "command": "run",
+                                           "port": a["processes"][0]["port"] or "auto"}) for a in APPS}
+    ports = {a["name"]: {"main": a["processes"][0]["port"]} for a in APPS if a["processes"][0]["port"]}
+    out = []
+    for raw in ROUTERS.values():
+        r = Router.model_validate(raw)
+        site, warnings = render.render_router(r, apps, ports, cfg, render.Facts(
+            certs_present={x.cert_name for x in map(Router.model_validate, ROUTERS.values())},
+            manifest_path=f"/home/deploy/apps/routers/{r.name}.toml"))
+        out.append({**r.model_dump(), "cert_name": r.cert_name, "url": f"https://{r.domain}", "live": True,
+                    "pending": False, "errors": [], "warnings": warnings, "config": site.content})
+    return {"routers": out, "invalid": {}, "apps": sorted(a["name"] for a in APPS)}
+
+
 def fake_overview(cfg):
+    m = _mounts()
+    for a in APPS:
+        a["mounts"] = m.get(a["name"], [])
     return {"apps": APPS, "invalid": {}, "observed": OBSERVED, "gpus": GPUS, "ui_domain": "host.example.com",
             "time": int(time.time()),
             "system": {"hostname": "gpu-box", "load": [3.42, 3.1, 2.87], "cpus": 24, "mem_total": 128 * 2**30,
@@ -197,7 +238,33 @@ def main() -> None:
     async def dns(domain: str):
         return {"domain": domain, "addresses": ["198.51.100.20"], "points_here": True}
 
-    for path, fn, methods in (("/api/apps/{name}/logs", logs, ["GET"]), ("/api/apps/{name}/logs/stream", stream, ["GET"]),
+    async def routers_get():
+        return fake_routers(cfg)
+
+    async def router_put(name: str, body: dict):
+        from ahost.models import Router
+        ROUTERS[name] = Router.model_validate({**body, "name": name}).model_dump()
+        await asyncio.sleep(0.4)
+        return {"ok": True, "log": []}
+
+    async def router_post(body: dict):
+        from ahost.models import Router
+        r = Router.model_validate({k: v for k, v in body.items() if k in ("name", "domain", "description")})
+        ROUTERS[r.name] = r.model_dump()
+        await asyncio.sleep(1.2)
+        return {"ok": True, "log": []}
+
+    async def router_apply(name: str):
+        return {"ok": True, "log": []}
+
+    async def router_delete(name: str, confirm: str = ""):
+        ROUTERS.pop(name, None)
+        return {"ok": True}
+
+    for path, fn, methods in (("/api/routers", routers_get, ["GET"]), ("/api/routers", router_post, ["POST"]),
+                              ("/api/routers/{name}", router_put, ["PUT"]), ("/api/routers/{name}", router_delete, ["DELETE"]),
+                              ("/api/routers/{name}/apply", router_apply, ["POST"]),
+                              ("/api/apps/{name}/logs", logs, ["GET"]), ("/api/apps/{name}/logs/stream", stream, ["GET"]),
                               ("/api/apps/{name}/manifest", manifest, ["GET"]), ("/api/preview", preview, ["POST"]),
                               ("/api/detect", detect, ["GET"]), ("/api/dns", dns, ["GET"])):
         app.router.routes.insert(0, APIRoute(path, fn, methods=methods))

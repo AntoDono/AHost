@@ -21,9 +21,9 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import ops, policy
 from ..config import Config
-from ..manifest_io import dumps, load_all, load_app
-from ..models import NAME_RE, App
-from ..plan import format_plan, make_plan
+from ..manifest_io import dumps, load_all, load_app, load_router, load_routers, routers_dir, write_router
+from ..models import NAME_RE, App, Entry, Router
+from ..plan import format_plan, make_plan, plan_router
 from . import auth, status
 
 COOKIE = "ahost_session"
@@ -299,9 +299,37 @@ def create_app(cfg: Config, store: auth.Store | None = None) -> FastAPI:
         (apps_dir / f"{name}.toml").write_text(body.toml)
         return {"ok": True}
 
+    def _mount_check(body: dict[str, Any], app_name: str) -> tuple[Router, Entry] | None:
+        """The `mount` part of a create/preview body: a router path to assign to the new app (new or reserved)."""
+        m = body.pop("mount", None)
+        if not m:
+            return None
+        routers, _ = load_routers(apps_dir)
+        r = routers.get(str(m.get("router", "")))
+        if r is None:
+            raise HTTPException(422, f"no router named {m.get('router')!r}")
+        try:
+            e = Entry(path=str(m.get("path", "")), app=app_name, strip=bool(m.get("strip", True)))
+        except ValidationError as ex:
+            raise HTTPException(422, ex.errors()[0]["msg"].removeprefix("Value error, ")) from ex
+        cur = r.entry(e.path)
+        if cur and cur.app and cur.app != app_name:
+            raise HTTPException(409, f"{r.domain}{e.path} is already assigned to {cur.app}")
+        return r, e
+
+    def _assign(r: Router, e: Entry) -> None:
+        cur = r.entry(e.path)
+        if cur:
+            cur.app, cur.strip = e.app, e.strip
+        else:
+            r.entries.append(e)
+        Router.model_validate(r.model_dump())
+        write_router(apps_dir, r)
+
     @app.post("/api/apps")
     async def create(body: dict[str, Any]):
         name = str(body.get("name", ""))
+        mount = _mount_check(body, name)
         if not NAME_RE.match(name):
             raise HTTPException(422, "name: lowercase letters, digits and dashes, starting with a letter")
         if (apps_dir / f"{name}.toml").exists():
@@ -315,12 +343,18 @@ def create_app(cfg: Config, store: auth.Store | None = None) -> FastAPI:
         if dup:
             raise HTTPException(409, "; ".join(dup))
         (apps_dir / f"{name}.toml").write_text(text)
+        if mount:
+            _assign(*mount)  # applied together with the app (ops.apply refreshes its routers)
         return {"ok": True, "name": name}
 
     @app.post("/api/preview")
     async def preview(body: dict[str, Any]):
         """Validate a would-be manifest and return what apply would do (nothing is written)."""
         name = str(body.get("name", "")) or "new-app"
+        try:
+            mount = _mount_check(body, name)
+        except HTTPException as ex:
+            return {"ok": False, "errors": [ex.detail], "toml": dumps(body)}
         text = dumps(body)
         try:
             a = App.model_validate(tomllib.loads(text))
@@ -330,9 +364,116 @@ def create_app(cfg: Config, store: auth.Store | None = None) -> FastAPI:
 
         def run():
             pl = make_plan(a, cfg, apps, str(apps_dir / f"{name}.toml"))
+            if mount:
+                r, e = mount
+                verb = "use the reserved path" if r.entry(e.path) else "add the path"
+                pl.steps.append(f"{verb} {r.domain}{e.path}/ on router {r.name} and point it at {name} "
+                                "(nginx -t + reload)")
+                if not any(p.port is not None for p in a.processes.values()) and not a.mount_routes():
+                    pl.errors.append("a router path needs a port or a static folder to serve")
             return {"ok": not pl.errors, "errors": pl.errors, "warnings": pl.warnings, "steps": pl.steps,
                     "ports": pl.ports, "text": format_plan(pl), "toml": text}
         return await run_in_threadpool(run)
+
+    # ------------------------------------------------------------ routers
+    def _load_router(name: str) -> Router:
+        if not NAME_RE.match(name):
+            raise HTTPException(404, "no such router")
+        path = routers_dir(apps_dir) / f"{name}.toml"
+        if not path.exists():
+            raise HTTPException(404, "no such router")
+        try:
+            return load_router(path)
+        except (ValueError, ValidationError) as e:
+            raise HTTPException(422, f"router file is invalid: {e}") from e
+
+    def _router_view(r: Router, apps: dict[str, App], routers: dict[str, Router]) -> dict:
+        pl = plan_router(r, cfg, apps, routers, str(routers_dir(apps_dir) / f"{r.name}.toml"))
+        return {**r.model_dump(), "cert_name": r.cert_name, "url": f"https://{r.domain}",
+                "live": pl.file is not None and pl.file.status == "same",
+                "pending": pl.file is not None and pl.file.status != "same",
+                "errors": pl.errors, "warnings": pl.warnings, "config": pl.content}
+
+    @app.get("/api/routers")
+    async def routers_list():
+        def run():
+            apps, _ = load_all(apps_dir)
+            routers, invalid = load_routers(apps_dir)
+            return {"routers": [_router_view(r, apps, routers) for r in routers.values()], "invalid": invalid,
+                    "apps": sorted(apps)}
+        return await run_in_threadpool(run)
+
+    async def _apply_router(name: str, log: list[str]) -> JSONResponse | None:
+        try:
+            await run_in_threadpool(ops.apply_router, name, log.append, False)
+        except ops.OpError as e:
+            return JSONResponse({"ok": False, "error": str(e), "log": log}, status_code=500)
+        return None
+
+    def _parse_router(body: dict[str, Any]) -> Router:
+        try:
+            return Router.model_validate(body)
+        except ValidationError as e:
+            raise HTTPException(422, "; ".join(x["msg"].removeprefix("Value error, ") for x in e.errors())) from e
+
+    def _router_errors(r: Router) -> list[str]:
+        from .. import host
+        apps, _ = load_all(apps_dir)
+        routers, _ = load_routers(apps_dir)
+        errs = policy.check_router(r, list(apps.values()), routers, host.legacy_server_names(cfg), cfg.ui.domain)
+        errs += [f"{e.path}: no app named {e.app!r}" for e in r.entries if e.app and e.app not in apps]
+        return errs
+
+    @app.post("/api/routers")
+    async def router_create(body: dict[str, Any]):
+        r = _parse_router({k: v for k, v in body.items() if k in ("name", "domain", "description")})
+        if (routers_dir(apps_dir) / f"{r.name}.toml").exists():
+            raise HTTPException(409, f"a router named {r.name} already exists")
+        errs = await run_in_threadpool(_router_errors, r)
+        if errs:
+            raise HTTPException(409, "; ".join(errs))
+        write_router(apps_dir, r)
+        log: list[str] = []
+        fail = await _apply_router(r.name, log)
+        return fail or {"ok": True, "log": log}
+
+    @app.put("/api/routers/{name}")
+    async def router_save(name: str, body: dict[str, Any]):
+        """Save the whole router (paths and assignments) and make it live. A failed apply puts the file back."""
+        old = _load_router(name)
+        r = _parse_router({**body, "name": name})
+        errs = await run_in_threadpool(_router_errors, r)
+        if errs:
+            raise HTTPException(422, "; ".join(errs))
+        write_router(apps_dir, r)
+        log: list[str] = []
+        fail = await _apply_router(name, log)
+        if fail:
+            write_router(apps_dir, old)
+        return fail or {"ok": True, "log": log}
+
+    @app.post("/api/routers/{name}/apply")
+    async def router_apply(name: str):
+        _load_router(name)
+        log: list[str] = []
+        fail = await _apply_router(name, log)
+        return fail or {"ok": True, "log": log}
+
+    @app.delete("/api/routers/{name}")
+    async def router_delete(name: str, confirm: str = ""):
+        _load_router(name)
+        if confirm != name:
+            raise HTTPException(400, "type the router name to confirm")
+        try:
+            await run_in_threadpool(lambda: ops.helper("remove-router", name, interactive=False))
+        except ops.OpError as e:
+            raise HTTPException(500, str(e)) from e
+        src = routers_dir(apps_dir) / f"{name}.toml"
+        dst = routers_dir(apps_dir) / ".deleted"
+        dst.mkdir(exist_ok=True)
+        import time
+        src.rename(dst / f"{name}.{time.strftime('%Y%m%d-%H%M%S')}.toml")
+        return {"ok": True}
 
     # ------------------------------------------------------------ create-form helpers
     def _allowed(p: str) -> Path:

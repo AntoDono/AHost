@@ -147,3 +147,29 @@ def check_unique_domains(apps: list[App], legacy_names: dict[str, str]) -> list[
             if site and not (a.legacy and a.legacy.site == site):
                 errors.append(f"domain {d} ({a.name}) is still served by legacy site {site!r}")
     return errors
+
+
+def reserved_domains(routers: dict, ui_domain: str | None) -> dict[str, str]:
+    """Domains that belong to routers or the dashboard: domain -> owner label."""
+    out = {r.domain: f"router {r.name}" for r in routers.values()}
+    if ui_domain:
+        out[ui_domain] = "the AHost dashboard"
+    return out
+
+
+def check_router(router, apps: list[App], routers: dict, legacy_names: dict[str, str],
+                 ui_domain: str | None) -> list[str]:
+    """A router's domain must not be anyone else's."""
+    errors = []
+    d = router.domain
+    for a in apps:
+        if d in a.domains:
+            errors.append(f"domain {d} already belongs to app {a.name}")
+    for other in routers.values():
+        if other.name != router.name and other.domain == d:
+            errors.append(f"domain {d} already belongs to router {other.name}")
+    if d in legacy_names:
+        errors.append(f"domain {d} is served by legacy site {legacy_names[d]!r}")
+    if ui_domain and d == ui_domain:
+        errors.append(f"domain {d} is the AHost dashboard's")
+    return errors

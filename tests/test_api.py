@@ -90,3 +90,42 @@ def test_csp_follows_index_changes(client):
     os.utime(idx, ns=(idx.stat().st_atime_ns, idx.stat().st_mtime_ns + 1_000_000))
     second = c.get("/").headers["content-security-policy"]
     assert first != second and "sha256-" in second
+
+
+def test_routers_create_assign_and_mount(client, monkeypatch):
+    from ahost import ops
+    calls = []
+    monkeypatch.setattr(ops, "helper", lambda *a, **k: calls.append(a) or {"ok": True, "warnings": []})
+    c, tmp = client
+    login(c)
+    r = c.post("/api/routers", json={"name": "apps", "domain": "apps.example.com"}, headers=H)
+    assert r.status_code == 200 and calls[-1] == ("apply-router", "apps")
+    assert c.post("/api/routers", json={"name": "apps", "domain": "x.example.com"}, headers=H).status_code == 409
+    assert c.post("/api/routers", json={"name": "b", "domain": "apps.example.com"}, headers=H).status_code == 409
+    # reserve a path, then host a new app on it
+    body = {"domain": "apps.example.com", "entries": [{"path": "/chat"}]}
+    assert c.put("/api/routers/apps", json=body, headers=H).status_code == 200
+    app = {"name": "chat", "workdir": str(tmp / "home/proj"),
+           "processes": {"main": {"command": "run", "port": "auto"}},
+           "routes": [{"path": "/", "to": "main"}], "mount": {"router": "apps", "path": "/chat"}}
+    pv = c.post("/api/preview", json=app, headers=H).json()
+    assert pv["ok"], pv
+    assert any("reserved path apps.example.com/chat/" in s for s in pv["steps"])
+    assert c.post("/api/apps", json=app, headers=H).status_code == 200
+    assert "mount" not in (tmp / "apps/chat.toml").read_text()
+    view = c.get("/api/routers").json()["routers"][0]
+    assert view["entries"][0]["app"] == "chat" and view["pending"]
+    # the same path can't go to another app, and an app can't take the router's domain
+    other = {**app, "name": "other"}
+    assert c.post("/api/apps", json=other, headers=H).status_code == 409
+    taken = {"name": "t", "workdir": str(tmp / "home/proj"), "command": "run", "port": "auto",
+             "domains": ["apps.example.com"]}
+    assert any("router apps" in e for e in c.post("/api/preview", json=taken, headers=H).json()["errors"])
+    # a failed apply puts the old router file back
+    def boom(*a, **k):
+        raise ops.OpError("nginx -t failed")
+    monkeypatch.setattr(ops, "helper", boom)
+    before = (tmp / "apps/routers/apps.toml").read_text()
+    assert c.put("/api/routers/apps", json={"domain": "apps.example.com"}, headers=H).status_code == 500
+    assert (tmp / "apps/routers/apps.toml").read_text() == before
+    assert c.delete("/api/routers/apps", params={"confirm": "nope"}, headers=H).status_code == 400

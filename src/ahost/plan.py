@@ -11,7 +11,7 @@ from pathlib import Path
 from . import host, policy, render
 from .config import Config
 from .gpu import minor_map
-from .models import App
+from .models import App, Router
 from .ports import PortError, Registry, listening_ports
 
 
@@ -84,6 +84,9 @@ def make_plan(app: App, cfg: Config, all_apps: dict[str, App], manifest_path: st
     others = {**all_apps, app.name: app}
     pl.errors += [e for e in policy.check_unique_domains(list(others.values()), legacy_names)
                   if any(f"domain {d} " in e for d in app.domains)]
+    from .manifest_io import load_routers
+    taken = policy.reserved_domains(load_routers(Path(cfg.paths.apps_dir))[0], cfg.ui.domain)
+    pl.errors += [f"domain {d} belongs to {taken[d]}" for d in app.domains if d in taken]
     reg = open_registry(cfg)
     listening = listening_ports()
     try:
@@ -150,3 +153,37 @@ def format_plan(pl: Plan, *, show_diffs: bool = True) -> str:
                 out.append(f"--- new file {f.path}")
                 out.append(f.diff.rstrip())
     return "\n".join(out)
+
+
+@dataclass
+class RouterPlan:
+    router: str
+    file: FileChange | None = None
+    content: str = ""
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+def plan_router(router: Router, cfg: Config, all_apps: dict[str, App], routers: dict[str, Router],
+                manifest_path: str) -> RouterPlan:
+    """What apply-router would write (unprivileged, nothing changes)."""
+    rp = RouterPlan(router.name)
+    rp.errors += policy.check_router(router, list(all_apps.values()), routers, host.legacy_server_names(cfg),
+                                     cfg.ui.domain)
+    for e in router.entries:
+        if e.app and e.app in all_apps:
+            rp.errors += [f"{e.path}: {x}" for x in policy.check(all_apps[e.app], cfg).errors]
+    ports: dict[str, dict[str, int]] = {}
+    for a in open_registry(cfg).all():
+        ports.setdefault(a.app, {})[a.process] = a.port
+    facts = render.Facts(certs_present=host.certs_present(cfg), manifest_path=manifest_path)
+    try:
+        art, rp.warnings = render.render_router(router, all_apps, ports, cfg, facts)
+    except ValueError as e:
+        rp.errors.append(str(e))
+        return rp
+    rp.file, rp.content = _compare(art), art.content
+    if router.cert_name not in facts.certs_present:
+        rp.warnings.append(f"no certificate yet: apply asks Let's Encrypt for {router.domain} "
+                           "(its DNS record must point at this server)")
+    return rp

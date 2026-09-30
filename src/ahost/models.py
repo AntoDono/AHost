@@ -293,6 +293,13 @@ class App(Strict):
         target = self._default_route_target()
         return [Route(path="/", to=target)] if (target and self.domains) else []
 
+    def mount_routes(self) -> list[Route]:
+        """Routes to serve under a router path (same as effective_routes, but no domain is needed)."""
+        if self.routes:
+            return self.routes
+        target = self._default_route_target()
+        return [Route(path="/", to=target)] if target else []
+
     def instance(self, pid: str) -> str:
         """systemd instance name: <app> for a single 'main' process, else <app>:<pid>."""
         if list(self.processes) == [MAIN]:
@@ -315,3 +322,78 @@ class App(Strict):
 
 
 Port = Annotated[int, Field(ge=1, le=65535)]
+
+
+# ---------------------------------------------------------------- routers
+ENTRY_RE = re.compile(r"^(/[a-z0-9][a-z0-9._-]{0,62}){1,4}$")
+
+
+class Entry(Strict):
+    """One path on a router, e.g. /chat. With no app it is reserved: nginx answers 404 until it's assigned."""
+
+    path: str
+    app: str | None = None
+    strip: bool = True  # the app sees / instead of /chat (redirects and cookies are rewritten to match)
+    note: str = ""
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, v: str) -> str:
+        v = v.rstrip("/")
+        if not ENTRY_RE.match(v) or ".." in v:
+            raise ValueError(f"path {v!r}: use /name (lowercase letters, digits, . _ -), up to 4 levels")
+        return v
+
+    @field_validator("app")
+    @classmethod
+    def _app(cls, v: str | None) -> str | None:
+        if v is not None and not NAME_RE.match(v):
+            raise ValueError(f"invalid app name {v!r}")
+        return v
+
+
+class Router(Strict):
+    """A shared domain whose paths lead to different apps: <domain>/<path> -> app. One per <apps_dir>/routers/*.toml."""
+
+    name: str
+    domain: str
+    description: str = ""
+    cert: str | None = None  # existing certbot cert name; default ahost-router.<name>
+    index: str | None = None  # "/" redirects to this entry path; None = 404
+    max_body: str | None = None
+    entries: list[Entry] = []
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        if not NAME_RE.match(v):
+            raise ValueError(f"name must match {NAME_RE.pattern}")
+        return v
+
+    @field_validator("domain")
+    @classmethod
+    def _domain(cls, v: str) -> str:
+        if not DOMAIN_RE.match(v):
+            raise ValueError(f"invalid domain {v!r}")
+        return v
+
+    @model_validator(mode="after")
+    def _consistency(self) -> Router:
+        paths = [e.path for e in self.entries]
+        dup = sorted({p for p in paths if paths.count(p) > 1})
+        if dup:
+            raise ValueError(f"paths used twice: {dup}")
+        if self.index is not None and self.index not in paths:
+            raise ValueError(f"index {self.index!r} is not one of this router's paths")
+        if self.max_body is not None and not SIZE_RE.match(self.max_body):
+            raise ValueError(f"max_body: bad size {self.max_body!r}")
+        if self.cert is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", self.cert):
+            raise ValueError("invalid cert name")
+        return self
+
+    @property
+    def cert_name(self) -> str:
+        return self.cert or f"ahost-router.{self.name}"
+
+    def entry(self, path: str) -> Entry | None:
+        return next((e for e in self.entries if e.path == path.rstrip("/")), None)

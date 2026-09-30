@@ -12,11 +12,12 @@ import shlex
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
+from types import SimpleNamespace
 
 import jinja2
 
 from .config import Config
-from .models import App, Process, Route
+from .models import App, Process, Proxy, Route, Router
 from .policy import resolve
 
 PORT_REF = re.compile(r"\{port(?::([a-z][a-z0-9-]{0,19}))?\}")
@@ -48,6 +49,15 @@ class Artifact:
     content: str
     mode: int = 0o644
     kind: str = "file"  # "unit" | "env" | "run" | "site" | "static"
+
+
+@dataclass(frozen=True)
+class Mount:
+    """Where a router puts an app: https://<domain><prefix>/..."""
+
+    domain: str
+    prefix: str  # "/chat", no trailing slash
+    strip: bool = True
 
 
 @dataclass
@@ -217,11 +227,27 @@ def render_process(app: App, pid: str, port: int | None, cfg: Config, facts: Fac
 
 
 # ---------------------------------------------------------------- nginx
-def _location(app: App, r: Route, ports: dict[str, int]) -> str:
+def _mounted_path(path: str, prefix: str) -> str | None:
+    """A route path moved under a router prefix. None for regex routes (they can't be moved safely)."""
+    if path.startswith("= /"):
+        return f"= {prefix}{path[2:]}"
+    if path.startswith("/"):
+        return prefix + path
+    return None
+
+
+def _location(app: App, r: Route, ports: dict[str, int], mount: Mount | None = None) -> str:
     L: list[str] = []
+    bare = r.path.removeprefix("= ")  # the URI part, for upstream URIs
+    path = r.path if mount is None else _mounted_path(r.path, mount.prefix)
     if r.static:
         d = resolve(app, r.static).rstrip("/")
-        if r.path == "/" or r.spa_fallback or r.static_root:
+        if mount is not None:  # `root` would append the router prefix to the folder: always alias
+            src = d + bare if r.static_root else d + ("/" if bare == "/" else "")
+            L.append(f"alias {src.rstrip('/')}/;" if bare.endswith("/") else f"alias {src};")
+            if r.spa_fallback:
+                L.append(f"try_files $uri $uri.html $uri/index.html {mount.prefix}{r.spa_fallback};")
+        elif r.path == "/" or r.spa_fallback or r.static_root:
             L.append(f"root {d};")
             if r.spa_fallback:
                 L.append(f"try_files $uri $uri.html $uri/index.html {r.spa_fallback};")
@@ -236,12 +262,20 @@ def _location(app: App, r: Route, ports: dict[str, int]) -> str:
         L.append(f"return {r.status};")
     else:
         port = ports[r.to]
-        L.append(f"proxy_pass http://127.0.0.1:{port}{'/' if r.strip_prefix else ''};")
+        if mount is None:
+            uri = "/" if r.strip_prefix else ""
+        elif mount.strip:  # /chat/api/x -> /api/x (or /x for a strip_prefix route)
+            uri = "/" if r.strip_prefix else bare
+        else:  # the app knows its prefix: pass the URI through unchanged
+            uri = mount.prefix + "/" if r.strip_prefix else ""
+        L.append(f"proxy_pass http://127.0.0.1:{port}{uri};")
         L += ["proxy_http_version 1.1;",
               "proxy_set_header Host $host;",
               "proxy_set_header X-Real-IP $remote_addr;",
               "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
               "proxy_set_header X-Forwarded-Proto $scheme;"]
+        if mount is not None and mount.strip:
+            L.append(f"proxy_set_header X-Forwarded-Prefix {mount.prefix};")
         if r.websocket:
             L += ["proxy_set_header Upgrade $http_upgrade;",
                   "proxy_set_header Connection $ahost_connection_upgrade;"]
@@ -252,6 +286,12 @@ def _location(app: App, r: Route, ports: dict[str, int]) -> str:
             L += [f"proxy_read_timeout {timeout};", f"proxy_send_timeout {timeout};"]
         if r.proxy_redirect_off:
             L.append("proxy_redirect off;")
+        elif mount is not None and mount.strip:
+            # the app thinks it lives at /: send its redirects (relative, or absolute to this domain) and cookies
+            # back under the prefix. Redirects elsewhere (OAuth providers, other sites) are left alone.
+            dom, pre = mount.domain.replace(".", r"\."), mount.prefix.lstrip("/").replace(".", r"\.")
+            L.append(f'proxy_redirect "~^(https?://{dom})?/(?!{pre}(?:/|$))(.*)$" "$1{mount.prefix}/$2";')
+            L.append(f"proxy_cookie_path / {mount.prefix}/;")
     if r.max_body:
         L.append(f"client_max_body_size {r.max_body};")
     for k, v in r.headers.items():
@@ -259,7 +299,7 @@ def _location(app: App, r: Route, ports: dict[str, int]) -> str:
     if r.raw:
         L += [ln.rstrip() for ln in fill_ports(r.raw, ports).strip().splitlines()]
     body = "\n".join("    " + ln for ln in L)
-    return f"location {r.path} {{\n{body}\n}}"
+    return f"location {path} {{\n{body}\n}}"
 
 
 def render_site(app: App, ports: dict[str, int], cfg: Config, facts: Facts) -> Artifact | None:
@@ -302,3 +342,66 @@ def render_static(cfg: Config) -> list[Artifact]:
         Artifact(f"{cfg.nginx.sites_dir}/00-common.conf", static_template("00-common.conf"), 0o644, "static"),
         Artifact(f"{cfg.nginx.sites_dir}/00-default.conf", default, 0o644, "static"),
     ]
+
+
+# ---------------------------------------------------------------- routers
+def router_site_path(cfg: Config, name: str) -> str:
+    return f"{cfg.nginx.sites_dir}/router.{name}.conf"  # app names can't contain dots, so no clash
+
+
+def render_router(router: Router, apps: dict[str, App], ports: dict[str, dict[str, int]], cfg: Config,
+                  facts: Facts) -> tuple[Artifact, list[str]]:
+    """One nginx site for the router's domain. Returns (site, warnings).
+
+    `ports` is app -> process -> port for apps that have been applied. Paths whose app is missing or not applied
+    yet answer 404/503 instead of failing the whole router.
+    """
+    warnings: list[str] = []
+    locs: list[str] = []
+    seen: dict[str, str] = {}
+
+    def add(key: str, owner: str, text: str) -> None:
+        if key in seen:
+            raise ValueError(f"{owner} and {seen[key]} both need location {key!r}; change one of the paths")
+        seen[key] = owner
+        locs.append(text)
+
+    if router.index:
+        add("= /", "index", f"location = / {{\n    return 302 {router.index}/;\n}}")
+    add("/", "fallback", "location / {\n    return 404;\n}")
+    for e in router.entries:
+        if e.app is None:
+            continue  # reserved: falls through to 404
+        a = apps.get(e.app)
+        if a is None:
+            warnings.append(f"{e.path}: app {e.app!r} doesn't exist (answers 404)")
+            continue
+        mount = Mount(router.domain, e.path, e.strip)
+        add(f"= {e.path}", e.path, f"location = {e.path} {{\n    return 301 {e.path}/$is_args$args;\n}}")
+        app_ports = ports.get(a.name, {})
+        missing = [p for p, proc in a.processes.items() if proc.port is not None and p not in app_ports]
+        if missing:
+            warnings.append(f"{e.path}: {a.name} hasn't been applied yet (answers 503)")
+            add(f"{e.path}/", e.path, f"location {e.path}/ {{\n    return 503;\n}}")
+            continue
+        routes = a.mount_routes()
+        if not routes:
+            warnings.append(f"{e.path}: {a.name} has no port and no static folder to serve")
+        for r in routes:
+            key = _mounted_path(r.path, e.path)
+            if key is None:
+                warnings.append(f"{e.path}: {a.name} route {r.path!r} is a regex and is skipped under a router")
+                continue
+            add(key, f"{e.path} ({a.name})", _location(a, r, app_ports, mount))
+        if a.proxy.raw_server or a.proxy.raw_http:
+            warnings.append(f"{e.path}: {a.name}'s raw_server/raw_http nginx is not carried under the router")
+    site_app = SimpleNamespace(name=f"router.{router.name}", domains=[router.domain],
+                               proxy=Proxy(max_body=router.max_body))
+    https = ([{"cert": router.cert_name, "domains": [router.domain]}]
+             if router.cert_name in facts.certs_present else [])
+    text = _env().get_template("site.conf.j2").render(
+        manifest_path=facts.manifest_path, app=site_app, locations="\n\n".join(locs), https_servers=https,
+        ipv6=cfg.nginx.listen_ipv6, log_dir=cfg.nginx.log_dir, webroot=cfg.certs.webroot,
+        live_dir=cfg.certs.live_dir, options_file=cfg.certs.options_file, dhparam=cfg.certs.dhparam,
+    )
+    return Artifact(router_site_path(cfg, router.name), text, 0o644, "site"), warnings

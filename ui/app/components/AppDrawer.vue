@@ -102,10 +102,11 @@ const running = computed(() => props.app && ['running', 'unhealthy', 'starting']
         <!-- overview -->
         <div v-if="tab === 'overview'" class="space-y-5 overflow-auto">
           <dl class="grid grid-cols-[8rem_1fr] gap-y-2 text-sm">
-            <dt class="text-muted">Domains</dt>
+            <dt class="text-muted">Addresses</dt>
             <dd class="flex flex-wrap gap-1.5">
               <a v-for="d in app.domains" :key="d" :href="`https://${d}`" target="_blank" rel="noopener" class="jack hover:!border-primary">{{ d }} ↗</a>
-              <span v-if="!app.domains.length" class="text-dimmed">none (not on the web)</span>
+              <a v-for="m in app.mounts" :key="m" :href="`https://${m}/`" target="_blank" rel="noopener" class="jack hover:!border-primary">{{ m }}/ ↗</a>
+              <span v-if="!app.domains.length && !app.mounts.length" class="text-dimmed">none (not on the web)</span>
             </dd>
             <dt class="text-muted">Folder</dt><dd class="data break-all">{{ app.workdir }}</dd>
             <dt class="text-muted">Runs as</dt><dd>{{ app.user }}<span v-if="app.user === 'root'" class="text-[var(--ah-signal)]"> (root)</span></dd>

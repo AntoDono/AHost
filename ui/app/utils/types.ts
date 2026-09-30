@@ -5,7 +5,7 @@ export interface Proc {
   since: string | null, health: Health | null
 }
 export interface AppInfo {
-  name: string, description: string, domains: string[], state: string, user: string, workdir: string
+  name: string, description: string, domains: string[], mounts: string[], state: string, user: string, workdir: string
   processes: Proc[], gpus: number[], sandbox: string, legacy: { unit?: string, site?: string } | null, multi: boolean
 }
 export interface Gpu {
@@ -19,3 +19,10 @@ export interface Overview {
   system: { hostname: string, load: number[], cpus: number, mem_total: number, mem_available: number,
     disk_total: number, disk_used: number, uptime_s: number }
 }
+export interface RouterEntry { path: string, app: string | null, strip: boolean, note: string }
+export interface RouterInfo {
+  name: string, domain: string, description: string, cert: string | null, index: string | null, max_body: string | null
+  entries: RouterEntry[], cert_name: string, url: string, live: boolean, pending: boolean
+  errors: string[], warnings: string[], config: string
+}
+export interface RoutersView { routers: RouterInfo[], invalid: Record<string, string>, apps: string[] }

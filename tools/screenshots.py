@@ -63,6 +63,13 @@ def main() -> None:
         pg.wait_for_selector("text=Running on cpu3")
         pg.wait_for_timeout(1500)
         pg.screenshot(path=OUT / "system.png", full_page=True)
+        # router: one domain, a path per app
+        pg.goto(f"{base}/router")
+        pg.wait_for_selector("text=apps.example.com")
+        pg.wait_for_timeout(900)
+        pg.locator("li.branch", has_text="/asr/").hover()
+        pg.wait_for_timeout(250)
+        pg.screenshot(path=OUT / "router.png")
         # new hosting with a live preview
         pg.goto(f"{base}/new")
         pg.fill("input[placeholder='/home/…/my-project']", "/home/deploy/projects/notes")

@@ -12,7 +12,7 @@ from pathlib import Path
 from .. import gpu as gpu_mod
 from .. import ops
 from ..config import Config
-from ..manifest_io import load_all
+from ..manifest_io import load_all, load_routers
 from ..models import App
 from ..plan import open_registry
 from ..ports import listening_ports
@@ -119,6 +119,13 @@ def overview(cfg: Config) -> dict:
         for u in g["users"]:
             gpu_by_app.setdefault(u["name"], []).append(g["index"])
 
+    routers, _ = load_routers(Path(cfg.paths.apps_dir))
+    mounts: dict[str, list[str]] = {}
+    for r in routers.values():
+        for e in r.entries:
+            if e.app:
+                mounts.setdefault(e.app, []).append(f"{r.domain}{e.path}")
+
     out_apps = []
     for name, a in sorted(apps.items()):
         procs = []
@@ -133,7 +140,8 @@ def overview(cfg: Config) -> dict:
         if state == "running" and any(p["health"] and not p["health"]["ok"] for p in procs):
             state = "unhealthy"
         out_apps.append({
-            "name": name, "description": a.description, "domains": a.domains, "state": state,
+            "name": name, "description": a.description, "domains": a.domains, "mounts": mounts.get(name, []),
+            "state": state,
             "user": a.user or cfg.run.default_user, "workdir": a.workdir, "processes": procs,
             "gpus": sorted(set(gpu_by_app.get(name, []))), "sandbox": a.sandbox.level,
             "legacy": a.legacy.model_dump() if a.legacy else None, "multi": a.multi,

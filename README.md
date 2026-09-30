@@ -21,6 +21,8 @@ hand-written unit + nginx site + certbot routine has stopped scaling.
   under `ahost@<app>.target`.
 - **nginx sites generated from one template**: WebSocket and streaming (SSE / LLM token streams) work by default,
   static folders are served by nginx, `nginx -t` runs before every reload, and a failed test is rolled back.
+- **Routers**: put several apps under one domain by path (`apps.example.com/chat`, `/docs`, ...). Reserve paths
+  first and assign them later; prefixes are stripped and redirects/cookies fixed up, or passed through.
 - **HTTPS via certbot** (webroot challenge); renewal uses certbot's own timer.
 - **GPU assignment** by card UUID, enforced at the device level, not just through `CUDA_VISIBLE_DEVICES`.
 - **Sandboxing** with systemd's native options (none / standard / strict), per app.
@@ -73,8 +75,10 @@ More examples: [`examples/apps/`](examples/apps/): a static site, a GPU inferenc
 |---|---|
 | ![Live logs for one app](docs/images/app-logs.png) | ![System: load per CPU thread, the processes on a thread, GPUs by app](docs/images/system.png) |
 | **Logs** per app: live output, nginx requests and errors, filters, since last restart | **System**: load on every CPU thread (click one to see its processes) and GPU memory by app |
-| ![New hosting form with a live plan preview](docs/images/new-hosting.png) | ![Dark mode](docs/images/rack-dark.png) |
-| **New hosting**: a form with a live preview of exactly what Apply will do | Light and dark themes |
+| ![Router: one domain, a path per app](docs/images/router.png) | ![New hosting form with a live plan preview](docs/images/new-hosting.png) |
+| **Router**: one domain, a path per app; reserve paths and assign them from a dropdown | **New hosting**: a form with a live preview of exactly what Apply will do (own domain or a router path) |
+| ![Dark mode](docs/images/rack-dark.png) | |
+| Light and dark themes | |
 
 <p align="center"><img src="docs/images/landing.png" width="49%" alt="Public landing page"> <img src="docs/images/mobile.png" width="22%" alt="Rack on a phone"></p>
 
@@ -89,7 +93,7 @@ creates its nginx site and certificate (`ahost ui-site`). There's a password log
 sudo -u ahost ahost user add <name>
 ```
 
-Rack (live status, start/stop/restart, logs), GPUs, Ports, and New hosting (form + live plan preview).
+Rack (live status, start/stop/restart, logs), System, Router, Ports, and New hosting (form + live plan preview).
 
 ## Documentation
 
@@ -97,6 +101,7 @@ Rack (live status, start/stop/restart, logs), GPUs, Ports, and New hosting (form
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | components, reconcile loop, systemd/nginx/cert/port/GPU/DNS details |
 | [docs/manifest.md](docs/manifest.md) | every manifest field |
+| [docs/routers.md](docs/routers.md) | several apps under one domain by path |
 | [docs/security.md](docs/security.md) | threat model, the root helper, UI auth, sandbox levels |
 | [docs/adopting-existing-services.md](docs/adopting-existing-services.md) | migrating hand-written units and nginx sites safely |
 | [docs/ui.md](docs/ui.md) | web UI spec and design direction |

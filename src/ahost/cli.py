@@ -22,6 +22,8 @@ from .plan import format_plan, make_plan, open_registry
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="AHost: app hosting from one manifest per app.")
 user_app = typer.Typer(no_args_is_help=True, help="Dashboard users.")
 app.add_typer(user_app, name="user")
+router_app = typer.Typer(no_args_is_help=True, help="Routers: one shared domain, a path per app (domain/<path>).")
+app.add_typer(router_app, name="router")
 STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "ahost"
 
 ConfigOpt = Annotated[Path | None, typer.Option("--config", "-c", help="config file (default $AHOST_CONFIG or /etc/ahost/ahost.toml)")]
@@ -414,6 +416,69 @@ def user_delete(username: str, config: ConfigOpt = None):
     from .api import auth
     auth.Store(_cfg(config)).delete_user(username)
     typer.secho(f"user {username} deleted", fg="green")
+
+
+# ---------------------------------------------------------------- routers
+def _routers(cfg: Config):
+    from .manifest_io import load_routers
+    routers, errors = load_routers(Path(cfg.paths.apps_dir))
+    for name, err in errors.items():
+        typer.secho(f"router {name}: invalid: {err}", fg="red", err=True)
+    return routers
+
+
+@router_app.command("list")
+def router_list(config: ConfigOpt = None):
+    """Routers and their paths."""
+    cfg = _cfg(config)
+    for r in _routers(cfg).values():
+        typer.secho(f"{r.name}  https://{r.domain}" + (f"  (/ -> {r.index}/)" if r.index else ""), bold=True)
+        for e in r.entries:
+            to = e.app or typer.style("reserved", dim=True)
+            typer.echo(f"  {e.path + '/':<24} {to}" + ("" if e.strip else "  (prefix passed through)"))
+
+
+@router_app.command("plan")
+def router_plan(name: str, config: ConfigOpt = None):
+    """Show the nginx site a router would get (nothing changes)."""
+    from .manifest_io import routers_dir
+    from .plan import plan_router
+    cfg = _cfg(config)
+    routers = _routers(cfg)
+    if name not in routers:
+        _fail(ValueError(f"no router {name!r} in {routers_dir(Path(cfg.paths.apps_dir))}"))
+    rp = plan_router(routers[name], cfg, _apps(cfg), routers, str(routers_dir(Path(cfg.paths.apps_dir)) / f"{name}.toml"))
+    for e in rp.errors:
+        typer.secho(f"  ERROR   {e}", fg="red")
+    for w in rp.warnings:
+        typer.secho(f"  warning {w}", fg="yellow")
+    if rp.file:
+        typer.echo(f"  {rp.file.status:<10} site  {rp.file.path}")
+        if rp.file.status != "same":
+            typer.echo("\n" + (rp.file.diff if rp.file.status == "update" else rp.content).rstrip())
+    raise typer.Exit(1 if rp.errors else 0)
+
+
+@router_app.command("apply")
+def router_apply(name: str, config: ConfigOpt = None):
+    """Write the router's nginx site (and get its certificate the first time)."""
+    _cfg(config)
+    try:
+        ops.apply_router(name, say=_say)
+    except ops.OpError as e:
+        _fail(e)
+    typer.secho(f"router {name} applied", fg="green")
+
+
+@router_app.command("remove")
+def router_remove(name: str, config: ConfigOpt = None):
+    """Take a router's site down. Its file and certificate are kept; apps are not touched."""
+    _cfg(config)
+    try:
+        ops.helper("remove-router", name, say=_say)
+    except ops.OpError as e:
+        _fail(e)
+    typer.secho(f"router {name} removed from nginx (its file under routers/ is kept)", fg="green")
 
 
 if __name__ == "__main__":

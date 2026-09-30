@@ -8,6 +8,7 @@ const colorMode = useColorMode()
 const nav = [
   { to: '/rack', label: 'Rack', icon: 'i-lucide-server' },
   { to: '/system', label: 'System', icon: 'i-lucide-activity' },
+  { to: '/router', label: 'Router', icon: 'i-lucide-split' },
   { to: '/ports', label: 'Ports', icon: 'i-lucide-cable' },
   { to: '/new', label: 'New hosting', icon: 'i-lucide-plus' },
 ]

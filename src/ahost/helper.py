@@ -18,8 +18,8 @@ from pathlib import Path
 
 from . import host, policy, render
 from .config import Config, load
-from .manifest_io import load_all, load_app
-from .models import NAME_RE, App
+from .manifest_io import load_all, load_app, load_router, load_routers, routers_dir
+from .models import NAME_RE, App, Router
 from .ports import Registry
 
 CONFIG_PATH = Path("/etc/ahost/ahost.toml")
@@ -65,6 +65,9 @@ def _app(cfg: Config, name: str) -> App:
     apps[name] = app
     dup = [e for e in policy.check_unique_domains(list(apps.values()), host.legacy_server_names(cfg))
            if any(f"domain {d} " in e for d in app.domains)]
+    routers, _ = load_routers(Path(cfg.paths.apps_dir))
+    taken = policy.reserved_domains(routers, cfg.ui.domain)
+    dup += [f"domain {d} belongs to {taken[d]}" for d in app.domains if d in taken]
     if dup:
         raise HelperError("; ".join(dup))
     return app
@@ -318,10 +321,87 @@ def v_install(cfg: Config) -> dict:
     return {"changed": changed}
 
 
+# ---------------------------------------------------------------- routers
+def _router(cfg: Config, name: str) -> Router:
+    if not NAME_RE.match(name):
+        raise HelperError(f"invalid router name {name!r}")
+    d = routers_dir(Path(cfg.paths.apps_dir))
+    path = d / f"{name}.toml"
+    if d.is_symlink() or path.is_symlink() or not path.is_file():
+        raise HelperError(f"{path} is not a regular file")
+    return load_router(path)
+
+
+def _router_apps(cfg: Config, router: Router) -> dict[str, App]:
+    """The router's apps, each validated like `_app` does (their routes end up in root's nginx config)."""
+    out = {}
+    for e in router.entries:
+        if e.app and e.app not in out and (Path(cfg.paths.apps_dir) / f"{e.app}.toml").is_file():
+            out[e.app] = _app(cfg, e.app)
+    return out
+
+
+def v_apply_router(cfg: Config, name: str) -> dict:
+    """Write the router's nginx site; get its certificate the first time (then write it again with HTTPS)."""
+    router = _router(cfg, name)
+    apps = _router_apps(cfg, router)
+    all_apps, _ = load_all(Path(cfg.paths.apps_dir))
+    routers, _ = load_routers(Path(cfg.paths.apps_dir))
+    errs = policy.check_router(router, list(all_apps.values()), routers, host.legacy_server_names(cfg), cfg.ui.domain)
+    if errs:
+        raise HelperError("; ".join(errs))
+    ports: dict[str, dict[str, int]] = {}
+    for a in _registry(cfg).all():
+        ports.setdefault(a.app, {})[a.process] = a.port
+    facts = render.Facts(certs_present=host.certs_present(cfg),
+                         manifest_path=str(routers_dir(Path(cfg.paths.apps_dir)) / f"{name}.toml"))
+    Path(cfg.nginx.log_dir).mkdir(parents=True, exist_ok=True)
+    Path(cfg.certs.webroot).mkdir(parents=True, exist_ok=True)
+    changed, issued, warnings = False, False, []
+    for _ in range(2):
+        try:
+            site, warnings = render.render_router(router, apps, ports, cfg, facts)
+        except ValueError as e:
+            raise HelperError(str(e)) from e
+        _allowed_path(cfg, site.path)
+        old = Path(site.path).read_text() if Path(site.path).exists() else None
+        if write_atomic(site.path, site.content, 0o644):
+            changed = True
+            _nginx_test_or_restore({site.path: old}, {})
+            sh("systemctl", "reload", "nginx")
+        if router.cert_name in facts.certs_present:
+            break
+        args = ["certbot", "certonly", "--non-interactive", "--agree-tos", "--webroot", "-w", cfg.certs.webroot,
+                "--cert-name", router.cert_name, "-d", router.domain, "--deploy-hook", "systemctl reload nginx"]
+        args += ["-m", cfg.certs.email] if cfg.certs.email else ["--register-unsafely-without-email"]
+        sh(*args)
+        issued = True
+        facts.certs_present.add(router.cert_name)
+    log(f"apply-router router={name} changed={changed} issued={issued}")
+    return {"changed": changed, "cert_issued": issued, "warnings": warnings}
+
+
+def v_remove_router(cfg: Config, name: str) -> dict:
+    """Take the router's site down. Its file under routers/ and its certificate are kept."""
+    if not NAME_RE.match(name):
+        raise HelperError("invalid router name")
+    site = Path(render.router_site_path(cfg, name))
+    if not site.exists():
+        return {"removed": []}
+    old = site.read_text()
+    site.unlink()
+    _nginx_test_or_restore({str(site): old}, {})
+    sh("systemctl", "reload", "nginx")
+    log(f"remove-router router={name}")
+    return {"removed": [str(site)]}
+
+
 # ---------------------------------------------------------------- ddclient
 def _ddclient_desired(cfg: Config) -> set[str]:
     apps, _ = load_all(Path(cfg.paths.apps_dir))
+    routers, _ = load_routers(Path(cfg.paths.apps_dir))
     hosts = {d for a in apps.values() for d in a.domains} | set(cfg.dns.static_hosts)
+    hosts |= {r.domain for r in routers.values()}
     if cfg.ui.domain:
         hosts.add(cfg.ui.domain)
     return hosts
@@ -413,7 +493,8 @@ def v_ui_site(cfg: Config) -> dict:
 
 # ---------------------------------------------------------------- nginx logs (read-only)
 def v_nginx_log(cfg: Config, name: str, kind: str, lines: str) -> dict:
-    if not NAME_RE.match(name) and name != "ahost-ui":
+    router = name.removeprefix("router.")
+    if not NAME_RE.match(name) and name != "ahost-ui" and not (name.startswith("router.") and NAME_RE.match(router)):
         raise HelperError("invalid app name")
     if kind not in ("access", "error"):
         raise HelperError("kind must be access or error")
@@ -436,6 +517,8 @@ VERBS = {
     "legacy-unit": (2, lambda c, a: v_legacy_unit(c, a[0], a[1])),
     "cert": (1, lambda c, a: v_cert(c, a[0])),
     "remove": (1, lambda c, a: v_remove(c, a[0])),
+    "apply-router": (1, lambda c, a: v_apply_router(c, a[0])),
+    "remove-router": (1, lambda c, a: v_remove_router(c, a[0])),
     "ddclient": (1, lambda c, a: v_ddclient(c, a[0])),
     "ui-site": (0, lambda c, a: v_ui_site(c)),
     "nginx-log": (3, lambda c, a: v_nginx_log(c, a[0], a[1], a[2])),

@@ -4,6 +4,7 @@ const emit = defineEmits<{ open: [tab?: string], action: [action: 'start' | 'sto
 
 const main = computed(() => props.app.processes.find(p => p.port) ?? props.app.processes[0])
 const cable = computed(() => cableColor(props.app.name))
+const addresses = computed(() => [...props.app.domains, ...(props.app.mounts ?? []).map(m => `${m}/`)])
 const running = computed(() => ['running', 'unhealthy', 'starting'].includes(props.app.state))
 const memory = computed(() => props.app.processes.reduce((s, p) => s + (p.memory ?? 0), 0))
 const restarts = computed(() => props.app.processes.reduce((s, p) => s + p.restarts, 0))
@@ -44,8 +45,8 @@ function onClick(e: MouseEvent) {
 
       <!-- routing strip: domain → port → service → GPU -->
       <div class="route flex flex-wrap items-center gap-1.5 min-w-0 py-1 lg:grid lg:flex-nowrap" aria-label="Request path">
-        <span class="jack truncate min-w-0" :title="app.domains.join(', ')">
-          <template v-if="app.domains.length">{{ app.domains[0] }}<span v-if="app.domains.length > 1" class="text-dimmed"> +{{ app.domains.length - 1 }}</span></template>
+        <span class="jack truncate min-w-0" :title="addresses.join(', ')">
+          <template v-if="addresses.length">{{ addresses[0] }}<span v-if="addresses.length > 1" class="text-dimmed"> +{{ addresses.length - 1 }}</span></template>
           <span v-else class="text-dimmed">no domain</span>
         </span>
         <span class="cable" aria-hidden="true" />

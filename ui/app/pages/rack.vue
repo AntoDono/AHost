@@ -14,7 +14,7 @@ const apps = computed(() => {
   const all = data.value?.apps ?? []
   const order: Record<string, number> = { failed: 0, unhealthy: 1, starting: 2, running: 3, stopped: 4 }
   return all
-    .filter(a => !q || a.name.includes(q) || a.domains.some(d => d.includes(q)) || a.processes.some(p => String(p.port).includes(q)))
+    .filter(a => !q || a.name.includes(q) || a.domains.some(d => d.includes(q)) || (a.mounts ?? []).some(m => m.includes(q)) || a.processes.some(p => String(p.port).includes(q)))
     .sort((a, b) => (order[a.state] ?? 9) - (order[b.state] ?? 9) || a.name.localeCompare(b.name))
 })
 const selectedApp = computed(() => data.value?.apps.find(a => a.name === selected.value) ?? null)
