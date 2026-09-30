@@ -242,3 +242,10 @@ def test_compare_baselines_allows_added_https_redirect():
                                     "https a /": {"status": 404, "sha": "q", "type": "text/html"}}) == []
     assert compare_baselines(prev, {"http a /": {"status": 301, "sha": "z", "type": "text/html"},
                                     "https a /": {"status": 502, "sha": "q", "type": "text/html"}})
+
+
+def test_static_root_mode(workdir, cfg):
+    a = mk(workdir, routes=[{"path": "/_nuxt/", "static": "public", "static_root": True,
+                             "raw": "try_files $uri =404;"}, {"path": "/", "to": "main"}])
+    site = render.render_site(a, {"main": 1}, cfg, render.Facts()).content
+    assert f"root {workdir}/public;" in site and "alias" not in site

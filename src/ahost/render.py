@@ -205,7 +205,7 @@ def _location(app: App, r: Route, ports: dict[str, int]) -> str:
     L: list[str] = []
     if r.static:
         d = resolve(app, r.static).rstrip("/")
-        if r.path == "/" or r.spa_fallback:
+        if r.path == "/" or r.spa_fallback or r.static_root:
             L.append(f"root {d};")
             if r.spa_fallback:
                 L.append(f"try_files $uri $uri.html $uri/index.html {r.spa_fallback};")

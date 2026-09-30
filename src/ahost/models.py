@@ -120,6 +120,7 @@ class Route(Strict):
     path: str  # "/", "/api/", "= /exact", "~ ^/regex"
     to: str | None = None  # process id
     static: str | None = None  # directory, relative to workdir
+    static_root: bool = False  # nginx `root` (dir + full URI) instead of `alias` (dir replaces the path prefix)
     status: int | None = None  # fixed response (e.g. 404 to block a path)
     spa_fallback: str | None = None
     strip_prefix: bool = False  # proxy_pass with a trailing slash
@@ -137,6 +138,8 @@ class Route(Strict):
         n = sum(x is not None for x in (self.to, self.static, self.status))
         if n != 1:
             raise ValueError(f"route {self.path!r}: set exactly one of to/static/status")
+        if self.static_root and not self.static:
+            raise ValueError("static_root only applies to static routes")
         if self.spa_fallback and not self.static:
             raise ValueError("spa_fallback only applies to static routes")
         for f in ("timeout", "cache"):
