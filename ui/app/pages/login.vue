@@ -13,7 +13,7 @@ async function submit() {
   try {
     const r = await api<{ user: string }>('/api/auth/login', { method: 'POST', body: { username: username.value, password: password.value } })
     user.value = r.user
-    await navigateTo('/')
+    await navigateTo('/rack')
   } catch (e) {
     error.value = apiError(e)
   } finally {

@@ -130,6 +130,23 @@ def create_app(cfg: Config, store: auth.Store | None = None) -> FastAPI:
     async def overview():
         return await run_in_threadpool(status.overview, cfg)
 
+    @app.get("/api/system")
+    async def system_view():
+        from . import system
+        gpus = await run_in_threadpool(status.gpus_with_users, _unit_to_app())
+        return await run_in_threadpool(system.system, {"gpus": gpus})
+
+    @app.get("/api/system/cpu/{cpu}")
+    async def cpu_procs(cpu: int):
+        from . import system
+        if not 0 <= cpu < (os.cpu_count() or 1):
+            raise HTTPException(404, "no such CPU")
+        return {"cpu": cpu, "procs": await run_in_threadpool(system.procs_on_cpu, cpu, _unit_to_app())}
+
+    def _unit_to_app() -> dict[str, str]:
+        apps, _ = load_all(apps_dir)
+        return {a.unit(p): a.name for a in apps.values() for p in a.processes}
+
     @app.get("/api/ports")
     async def ports():
         return await run_in_threadpool(status.ports_view, cfg)

@@ -96,7 +96,7 @@ async function create() {
     const r = await api<{ log: string[] }>(`/api/apps/${f.name}/apply`, { method: 'POST' })
     progress.value.push(...r.log, 'Done.')
     toast.add({ title: `${f.name} is hosted`, color: 'success' })
-    setTimeout(() => navigateTo('/'), 1200)
+    setTimeout(() => navigateTo('/rack'), 1200)
   } catch (e) {
     progress.value.push(...((e as { data?: { log?: string[] } }).data?.log ?? []), `Failed: ${apiError(e)}`)
     toast.add({ title: 'Hosting not finished', description: `${apiError(e)} The manifest was saved; fix it from the app's Config tab and apply again.`, color: 'error' })

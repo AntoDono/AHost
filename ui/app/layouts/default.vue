@@ -6,8 +6,8 @@ const { data } = useOverview()
 const colorMode = useColorMode()
 
 const nav = [
-  { to: '/', label: 'Rack', icon: 'i-lucide-server' },
-  { to: '/gpus', label: 'GPUs', icon: 'i-lucide-cpu' },
+  { to: '/rack', label: 'Rack', icon: 'i-lucide-server' },
+  { to: '/system', label: 'System', icon: 'i-lucide-activity' },
   { to: '/ports', label: 'Ports', icon: 'i-lucide-cable' },
   { to: '/new', label: 'New hosting', icon: 'i-lucide-plus' },
 ]
@@ -32,7 +32,7 @@ async function signOut() {
   <div class="min-h-dvh md:grid md:grid-cols-[13.5rem_1fr]">
     <div class="md:border-r border-default bg-[var(--ah-panel)]">
     <aside class="md:sticky md:top-0 md:h-dvh flex md:flex-col gap-1 border-b md:border-b-0 border-default px-3 py-3 md:py-5 overflow-x-auto">
-      <NuxtLink to="/" class="flex items-center gap-2 px-2 md:mb-6 shrink-0" aria-label="AHost home">
+      <NuxtLink to="/rack" class="flex items-center gap-2 px-2 md:mb-6 shrink-0" aria-label="AHost rack">
         <span class="grid grid-cols-2 gap-[3px]" aria-hidden="true">
           <span class="screw" /><span class="screw" /><span class="screw" /><span class="screw" />
         </span>
