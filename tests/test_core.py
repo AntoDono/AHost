@@ -268,3 +268,10 @@ def test_raw_port_placeholder(workdir, cfg):
     bad = mk(workdir, proxy={"raw_server": "location /x { proxy_pass http://127.0.0.1:{port:nope}; }"})
     with pytest.raises(ValueError):
         render.render_site(bad, {"main": 1}, cfg, render.Facts())
+
+
+def test_static_cache_respects_explicit_cache_control(workdir, cfg):
+    a = mk(workdir, routes=[{"path": "/static/", "static": "s", "cache": "30d",
+                             "raw": 'add_header Cache-Control "public, immutable";'}, {"path": "/", "to": "main"}])
+    site = render.render_site(a, {"main": 1}, cfg, render.Facts()).content
+    assert site.count("Cache-Control") == 1 and "expires 30d;" in site

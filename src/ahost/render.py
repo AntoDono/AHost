@@ -228,7 +228,10 @@ def _location(app: App, r: Route, ports: dict[str, int]) -> str:
         else:
             L.append(f"alias {d}/;" if r.path.endswith("/") else f"alias {d};")
         if r.cache:
-            L += [f"expires {r.cache};", 'add_header Cache-Control "public";']
+            L.append(f"expires {r.cache};")
+            own = "cache-control" in (r.raw or "").lower() or any(k.lower() == "cache-control" for k in r.headers)
+            if not own:  # an explicit Cache-Control (raw or headers) wins; never send two
+                L.append('add_header Cache-Control "public";')
     elif r.status is not None:
         L.append(f"return {r.status};")
     else:
