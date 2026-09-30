@@ -232,3 +232,13 @@ def test_parsers():
     assert seconds("5s") == 5 and seconds("2min") == 120 and seconds("1h 30s") == 3630
     tree = parse_nginx("server { location / { return 200 'a;b'; } } # c")
     assert tree[0].first("location").first("return").args == ["200", "'a;b'"]
+
+
+def test_compare_baselines_allows_added_https_redirect():
+    from ahost.cli import compare_baselines
+    prev = {"http a /": {"status": 200, "sha": "x", "type": "text/html"},
+            "https a /": {"status": 404, "sha": "y", "type": "text/html"}}
+    assert compare_baselines(prev, {"http a /": {"status": 301, "sha": "z", "type": "text/html"},
+                                    "https a /": {"status": 404, "sha": "q", "type": "text/html"}}) == []
+    assert compare_baselines(prev, {"http a /": {"status": 301, "sha": "z", "type": "text/html"},
+                                    "https a /": {"status": 502, "sha": "q", "type": "text/html"}})

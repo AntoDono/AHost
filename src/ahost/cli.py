@@ -237,6 +237,8 @@ def compare_baselines(prev: dict, now: dict) -> list[str]:
         if n is None:
             out.append(f"{k}: missing now")
         elif n["status"] != v["status"]:
+            if k.startswith("http ") and n["status"] == 301 and v["status"] != 301:
+                continue  # AHost adds an HTTP->HTTPS redirect where the legacy site fell through (intended)
             out.append(f"{k}: status {v['status']} -> {n['status']}")
         elif v["type"].startswith(("text/css", "application/javascript", "image/", "font/")) and n["sha"] != v["sha"]:
             out.append(f"{k}: static content changed")
