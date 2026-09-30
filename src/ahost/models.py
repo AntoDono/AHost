@@ -175,7 +175,7 @@ class Sandbox(Strict):
 class Legacy(Strict):
     """Where an adopted app came from. Used by adopt/rollback; dropped once finalized."""
 
-    unit: str | None = None  # e.g. "ZhenCMS.service"
+    unit: str | None = None  # e.g. "myapp.service"
     site: str | None = None  # file name in sites-available, e.g. "cms-api"
 
 

@@ -168,7 +168,7 @@ def plan(names: Annotated[list[str] | None, typer.Argument()] = None, config: Co
 
 
 @app.command("import")
-def import_(unit: Annotated[str, typer.Option(help="legacy unit, e.g. ZhenCMS.service")],
+def import_(unit: Annotated[str, typer.Option(help="legacy unit, e.g. myapp.service")],
             name: Annotated[str, typer.Option(help="AHost app name")],
             site: Annotated[str | None, typer.Option(help="legacy nginx site file in sites-available")] = None,
             write: Annotated[bool, typer.Option("--write", help="write the manifest (default: print it)")] = False,
