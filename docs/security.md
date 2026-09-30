@@ -94,7 +94,9 @@ on what browsers do enforce:
 | Setup | Dashboard | Apps / routers | Why it is safe |
 |---|---|---|---|
 | With domains | `https://ahost.example.com` | own domains, or a router such as `https://apps.example.com/<app>` | different host |
-| Without domains (LAN, localhost) | `http://server:9900` | `http://server/<app>` via nginx on port 80 | different port |
+| Without domains (LAN, localhost) | `http://server:9900` | anything on port 80 or the apps' own ports | different port |
+
+Routers need a domain today; a domainless router on the server's IP would sit in the second row.
 
 The session cookie is host-only: it has no `Domain` attribute, so a sibling subdomain like `apps.example.com` never
 receives it.
