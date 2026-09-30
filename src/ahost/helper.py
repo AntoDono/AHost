@@ -80,7 +80,7 @@ def _registry(cfg: Config) -> Registry:
 
 def _facts(cfg: Config, app: App) -> render.Facts:
     from .gpu import minor_map
-    return render.Facts(certs_present=host.certs_present(cfg),
+    return render.Facts(certs_present=host.usable_certs(cfg, app.cert_groups()),
                         gpu_minors=minor_map() if any(p.gpus for p in app.processes.values()) else {},
                         manifest_path=str(Path(cfg.paths.apps_dir) / f"{app.name}.toml"))
 
@@ -353,7 +353,7 @@ def v_apply_router(cfg: Config, name: str) -> dict:
     ports: dict[str, dict[str, int]] = {}
     for a in _registry(cfg).all():
         ports.setdefault(a.app, {})[a.process] = a.port
-    facts = render.Facts(certs_present=host.certs_present(cfg),
+    facts = render.Facts(certs_present=host.usable_certs(cfg, {router.cert_name: [router.domain]}),
                          manifest_path=str(routers_dir(Path(cfg.paths.apps_dir)) / f"{name}.toml"))
     Path(cfg.nginx.log_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.certs.webroot).mkdir(parents=True, exist_ok=True)
@@ -464,7 +464,8 @@ def v_ui_site(cfg: Config) -> dict:
         raise HelperError(f"{cfg.ui.domain} is already served by legacy site {legacy[cfg.ui.domain]}")
     Path(cfg.nginx.log_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.certs.webroot).mkdir(parents=True, exist_ok=True)
-    facts = render.Facts(certs_present=host.certs_present(cfg), manifest_path="/etc/ahost/ahost.toml [ui]")
+    facts = render.Facts(certs_present=host.usable_certs(cfg, {"ahost-ui": [cfg.ui.domain]}),
+                         manifest_path="/etc/ahost/ahost.toml [ui]")
     path = f"{cfg.nginx.sites_dir}/ahost-ui.conf"
     issued = False
     # Until the certificate exists, port 80 only answers ACME challenges and returns 503: never serve the login

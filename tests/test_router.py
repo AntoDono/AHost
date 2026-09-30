@@ -122,3 +122,18 @@ def test_mount_routes_without_domain(apps):
     worker = App.model_validate({"name": "w", "workdir": "/tmp", "command": "run", "port": "auto"})
     assert worker.effective_routes() == []
     assert [r.path for r in worker.mount_routes()] == ["/"]
+
+
+def test_cert_must_cover_domains(tmp_path):
+    from ahost import host
+    cfg = Config.model_validate({"certs": {"live_dir": str(tmp_path / "le/live")}})
+    ren = tmp_path / "le/renewal"
+    ren.mkdir(parents=True)
+    (ren / "ui.conf").write_text("[renewalparams]\nauthenticator = webroot\n[[webroot_map]]\nold.example.com = /w\n")
+    (ren / "legacy.conf").write_text("[renewalparams]\nauthenticator = nginx\n")
+    assert host.cert_domains(cfg, "ui") == {"old.example.com"}
+    assert host.cert_domains(cfg, "legacy") is None
+    assert host.usable_certs(cfg, {"ui": ["old.example.com"]}) == {"ui"}
+    assert host.usable_certs(cfg, {"ui": ["new.example.com"]}) == set()  # re-issued for the new name
+    assert host.usable_certs(cfg, {"legacy": ["x.example.com"]}) == {"legacy"}  # unknown: trusted as before
+    assert host.usable_certs(cfg, {"nope": ["x.example.com"]}) == set()

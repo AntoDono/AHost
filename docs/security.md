@@ -68,6 +68,40 @@ Every call is logged to the journal with caller, verb, app and result.
 - Secrets entered in the UI are write-only: shown masked, never returned by the API.
 - Every mutating action is recorded in the apply history (who, when, what, result).
 
+### The dashboard gets an origin of its own
+
+Nothing else is ever served from the dashboard's origin (scheme + host + port). This is why a router can't use
+`ui.domain`, and why apps can't be mounted under a path of the dashboard's domain. The helper and the API refuse both.
+
+Browsers isolate pages by origin, not by path. If an app were served at `https://ahost.example.com/chat/`,
+next to the dashboard at `https://ahost.example.com/`, any script running on the app's pages would be same-origin
+with the dashboard. That includes an XSS bug in the app, or a compromised npm package in its frontend. Such a script
+could:
+
+- `fetch('/api/...')` with the signed-in admin's session. The browser attaches the cookie because the request goes to
+  `/api/`; a cookie `Path` only filters by the request URL, never by the page that made the request. The `X-AHost`
+  header check passes too, since same-origin scripts may set custom headers.
+- fake the path it came from. `Origin` carries no path. `Referer` does, but same-origin scripts can set it
+  (`fetch(url, { referrer: '/rack' })`) or leave it out.
+- `window.open('/rack')` and operate the dashboard through its DOM, which same-origin pages are allowed to do.
+
+Stripping the session cookie in nginx before it reaches the app only hides it from the app's backend. The attack runs
+in the admin's browser, so that doesn't help. Hardening such as `Cross-Origin-Opener-Policy`, in-memory tokens and
+blocking service workers makes an attack harder, but it doesn't add up to a boundary. Through the dashboard, an
+attacker controls the whole server: units, manifests, and root-rendered nginx and systemd config. So AHost relies only
+on what browsers do enforce:
+
+| Setup | Dashboard | Apps / routers | Why it is safe |
+|---|---|---|---|
+| With domains | `https://ahost.example.com` | own domains, or a router such as `https://apps.example.com/<app>` | different host |
+| Without domains (LAN, localhost) | `http://server:9900` | `http://server/<app>` via nginx on port 80 | different port |
+
+The session cookie is host-only: it has no `Domain` attribute, so a sibling subdomain like `apps.example.com` never
+receives it.
+
+Apps under one router do share an origin with each other (see [routers.md](routers.md)). That is a trade-off you
+choose per app. It never puts the dashboard at risk.
+
 ## Secrets
 
 - Put secrets in `/etc/ahost/apps/<app>.env` (0600, root) via the UI or `ahost secret set`, or keep them in the app's

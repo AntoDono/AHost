@@ -58,6 +58,23 @@ The app's own routes are all carried under the prefix: a `/static/` folder becom
 `= /health` becomes `= /chat/health`. Regex routes and `raw_server`/`raw_http` snippets are skipped (with a warning).
 An app can have its own domains and router paths at the same time; it may also have none of its own domain.
 
+## Why a router has its own domain
+
+A router can't live on the dashboard's domain (`ui.domain`). `ahost.example.com/chat` next to the dashboard at
+`ahost.example.com` would let any script on the chat app act as the signed-in admin: browsers isolate by origin
+(scheme + host + port), not by path, and neither nginx nor the API can tell which page a request came from. The
+details, and the alternatives that were considered, are in [security.md](security.md#the-dashboard-gets-an-origin-of-its-own).
+
+The usual setup:
+
+```
+https://ahost.example.com          the AHost dashboard (manage everything)
+https://apps.example.com/<app>     a router (what visitors use)
+https://chat.example.com           an app on its own domain (optional, alongside router paths)
+```
+
+The router's domain needs one DNS record and one certificate, created once. Every app you add after that only needs a path.
+
 ## Security note
 
 Apps on one router share an origin: cookies (unless the app scopes them), `localStorage` and service workers are

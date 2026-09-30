@@ -63,6 +63,32 @@ def certs_present(cfg: Config) -> set[str]:
         return set()
 
 
+def cert_domains(cfg: Config, name: str) -> set[str] | None:
+    """Domains a certbot cert covers, from its renewal config. None when unknown (only webroot certs list them)."""
+    try:
+        text = (Path(cfg.certs.live_dir).parent / "renewal" / f"{name}.conf").read_text()
+    except OSError:
+        return None
+    _, sep, rest = text.partition("[[webroot_map]]")
+    if not sep:
+        return None
+    return {m.group(1) for m in re.finditer(r"^\s*([A-Za-z0-9.*-]+)\s*=", rest, re.MULTILINE)}
+
+
+def usable_certs(cfg: Config, wanted: dict[str, list[str]]) -> set[str]:
+    """Cert names from `wanted` (cert -> domains it must serve) that exist and cover those domains. A cert whose
+    domains are unknown counts as usable; one known to lack a domain doesn't (it gets re-issued for the new set)."""
+    present = certs_present(cfg)
+    out = set()
+    for name, domains in wanted.items():
+        if name not in present:
+            continue
+        have = cert_domains(cfg, name)
+        if have is None or set(domains) <= have:
+            out.add(name)
+    return out
+
+
 def legacy_server_names(cfg: Config) -> dict[str, str]:
     """server_name -> legacy site file name, for every enabled legacy site."""
     out: dict[str, str] = {}

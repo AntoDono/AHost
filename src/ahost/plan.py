@@ -55,7 +55,7 @@ def open_registry(cfg: Config) -> Registry:
 
 def facts_for(app: App, cfg: Config, manifest_path: str) -> render.Facts:
     return render.Facts(
-        certs_present=host.certs_present(cfg),
+        certs_present=host.usable_certs(cfg, app.cert_groups()),
         gpu_minors=minor_map() if any(p.gpus for p in app.processes.values()) else {},
         manifest_path=manifest_path,
     )
@@ -176,7 +176,8 @@ def plan_router(router: Router, cfg: Config, all_apps: dict[str, App], routers: 
     ports: dict[str, dict[str, int]] = {}
     for a in open_registry(cfg).all():
         ports.setdefault(a.app, {})[a.process] = a.port
-    facts = render.Facts(certs_present=host.certs_present(cfg), manifest_path=manifest_path)
+    facts = render.Facts(certs_present=host.usable_certs(cfg, {router.cert_name: [router.domain]}),
+                         manifest_path=manifest_path)
     try:
         art, rp.warnings = render.render_router(router, all_apps, ports, cfg, facts)
     except ValueError as e:
