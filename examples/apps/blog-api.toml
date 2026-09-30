@@ -1,0 +1,8 @@
+# Simplest case: one process, one domain, auto port.
+name     = "blog-api"
+workdir  = "/home/me/projects/blog-api"
+command  = "uvicorn main:app --host 127.0.0.1 --port $PORT"
+runtime  = { venv = ".venv" }
+domains  = ["api.example.com"]
+health   = "/healthz"
+env      = { LOG_LEVEL = "info" }

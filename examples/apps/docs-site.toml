@@ -1,0 +1,14 @@
+# Static site: no process, nginx serves the folder.
+name    = "docs-site"
+workdir = "/home/me/projects/docs"
+domains = ["docs.example.com"]
+
+[[routes]]
+path   = "/assets/"
+static = "dist/assets/"
+cache  = "1y"
+
+[[routes]]
+path         = "/"
+static       = "dist"
+spa_fallback = "/index.html"

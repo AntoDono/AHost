@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+
+# UI
+ui/node_modules/
+ui/.nuxt/
+ui/.output/
+ui/.data/
+
+# Local / server-specific (never commit)
+*.env
+.env*
+!.env.example
+local/
+*.sqlite3
+*.db

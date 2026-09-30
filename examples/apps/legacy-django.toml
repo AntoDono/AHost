@@ -1,0 +1,19 @@
+# An adopted service: keeps its old port and existing certificate, behavior unchanged.
+name     = "shop-api"
+workdir  = "/home/me/projects/shop/backend"
+command  = "gunicorn shop.wsgi:application --bind 0.0.0.0:$PORT --workers 3"
+runtime  = { venv = "venv" }
+port     = 5100                                   # pinned: other things call it by port
+domains  = ["api.shop.example", "shop-api.example.com"]
+certs    = { "api.shop.example" = "api.shop.example", "shop-api.example.com" = "shop-api.example.com" }
+env      = { DJANGO_MODE = "production" }
+after    = ["postgresql.service"]
+stop_timeout = 90
+
+[[routes]]
+path   = "/static/"
+static = "static/"
+
+[[routes]]
+path = "/"
+to   = "main"

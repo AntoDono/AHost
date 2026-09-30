@@ -1,0 +1,39 @@
+# /etc/ahost/ahost.toml: server-wide AHost settings (root-owned; read by ahost and ahost-helper)
+
+[paths]
+apps_dir   = "/home/me/apps"           # where manifests live
+allowed_roots = ["/home/me"]            # workdirs/static dirs must resolve under one of these
+deny_paths = ["/home/me/.ssh", "/home/me/.config", "/home/me/apps"]
+
+[run]
+default_user = "me"                     # user apps run as unless the manifest says otherwise
+# Apps allowed to run as root are listed in /etc/ahost/root.allow (one name per line), never here.
+
+[ports]
+range    = [10000, 10999]               # auto-allocation range
+reserved = [25565, 25566]               # never allocated (things AHost doesn't manage)
+
+[nginx]
+sites_dir  = "/etc/nginx/ahost.d"
+log_dir    = "/var/log/nginx/ahost"
+catch_all  = true                       # install a 443 default_server that closes unknown-host connections
+
+[certs]
+email   = "you@example.com"
+webroot = "/var/www/ahost-acme"
+
+[dns]
+provider = "ddclient"                   # "ddclient" | "none"
+static_hosts = []                       # extra names ddclient keeps updating (e.g. a VPN host) that aren't apps
+
+[gpu]
+enabled = true
+
+[ui]
+bind = "127.0.0.1:9900"                 # put it behind nginx + HTTPS via its own manifest (ahost-ui)
+session_hours = 12
+totp = "optional"                       # "off" | "optional" | "required"
+
+[observe]
+# Units AHost shows (status, logs, GPU) but never modifies.
+units = ["postgresql@14-main.service", "redis-server.service", "ollama.service"]

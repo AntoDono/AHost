@@ -1,0 +1,17 @@
+# GPU inference server with streaming responses, sandboxed.
+name     = "whisper"
+workdir  = "/home/me/projects/whisper-api"
+command  = "python -m server --host 127.0.0.1 --port $PORT"
+runtime  = { uv = true }
+domains  = ["asr.example.com"]
+gpus     = ["GPU-3f1c2a9e-0000-0000-0000-000000000000"]   # picked by name in the UI, stored as UUID
+health   = "/health"
+memory_max = "24G"
+
+[proxy]
+max_body = "200m"          # audio uploads
+
+[sandbox]
+level    = "strict"
+caches   = ["huggingface", "torch"]
+rw_paths = ["outputs"]

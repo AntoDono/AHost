@@ -1,0 +1,9 @@
+# Worker with no port and no domain: just a supervised process.
+name     = "discord-bot"
+workdir  = "/home/me/projects/discord-bot"
+command  = "python main.py"
+runtime  = { venv = "venv" }
+env_file = ".env"
+
+[sandbox]
+level = "standard"
