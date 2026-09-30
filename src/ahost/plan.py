@@ -40,7 +40,11 @@ class Plan:
 def open_registry(cfg: Config) -> Registry:
     """The real registry if readable, else an in-memory copy (plan must work without root)."""
     db = Path(cfg.paths.state_dir) / "ahost.db"
-    if db.exists() and os.access(db, os.R_OK):
+    try:
+        readable = db.exists() and os.access(db, os.R_OK)
+    except PermissionError:  # state dir not traversable (not in the ahost group, or a new login is needed)
+        readable = False
+    if readable:
         reg = Registry(":memory:", cfg)
         src = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         src.backup(reg.db)
