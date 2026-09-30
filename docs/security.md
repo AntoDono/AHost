@@ -45,11 +45,14 @@ Verbs:
 
 | Verb | Effect |
 |---|---|
-| `apply-unit <app>` | render env file(s) (0600) + unit override(s), daemon-reload |
-| `apply-site <app>` | render site, `nginx -t`, reload; restore the previous file on failure |
-| `swap-site <app> <legacy>` | disable the legacy site + render the new one, **one** `nginx -t` + reload; restore both on failure |
+| `install` | template units, nginx common + catch-all files (idempotent) |
+| `apply-unit <app>` | allocate ports; render env file(s) (0600), run script(s), unit override(s); daemon-reload |
+| `apply-site <app>` | render site, `nginx -t`, reload; restore the previous file on failure. Refuses while a legacy site still serves the domain |
+| `swap-site <app>` | disable the manifest's `legacy.site` + render the new site, **one** `nginx -t` + reload; restore both on failure |
+| `unswap-site <app>` | rollback: remove the generated site and re-enable the legacy one, one reload |
+| `legacy-unit <action> <app>` | systemctl on the manifest's `legacy.unit`, only if listed in `legacy.allow` |
 | `remove <app>` | stop/disable, remove generated files, archive the cert's renewal config |
-| `unit <start\|stop\|restart\|enable\|disable> <unit>` | systemctl, within the allow-list above |
+| `unit <start\|stop\|restart\|enable\|disable> <app>` | systemctl on the app's `ahost@` units (or its target) |
 | `cert <app>` | certbot webroot for the manifest's domains |
 | `ddclient-hosts` | render the ddclient host list, restart ddclient |
 | `nginx-log <app> <access\|error> [--follow]` | read-only stream of that app's nginx logs |

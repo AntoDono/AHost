@@ -7,7 +7,7 @@
 | `ahost` (FastAPI + CLI, uv project) | `ahost` system user, from `/opt/ahost/venv` | reads manifests, computes plans, serves the API and UI, streams logs/status |
 | `ahost-helper` | root, via one sudoers rule for user `ahost`; runs from root-owned `/opt/ahost/venv` | renders and installs generated files, runs systemctl/nginx/certbot/ddclient. Fixed verbs only. See [security.md](security.md) |
 | `ahost@.service` / `ahost@.target` | systemd templates | one instance per app (or per process of a multi-process app) |
-| `/usr/local/lib/ahost/run` | inside each unit | sets up the runtime (venv/uv/conda/node) and `exec`s the app command |
+| `/etc/ahost/apps/<instance>.sh` | inside each unit | generated per process: `cd`, runtime `PATH`/`VIRTUAL_ENV`, then `exec` the command. Readable, so you can see exactly what runs |
 | nginx | as installed | serves `/etc/nginx/ahost.d/*.conf` next to any existing sites |
 | certbot | as installed | issues certs with the webroot challenge; its own timer renews them |
 | SQLite (`/var/lib/ahost/ahost.db`) | `ahost` | port registry, apply history, health samples, UI users |
@@ -50,7 +50,7 @@ After=network.target
 [Service]
 Type=simple
 EnvironmentFile=-/etc/ahost/apps/%i.env
-ExecStart=/usr/local/lib/ahost/run
+ExecStart=/etc/ahost/apps/%i.sh
 Restart=always
 RestartSec=5
 KillMode=control-group
@@ -69,8 +69,11 @@ Design notes:
 - **Environment precedence:** `EnvironmentFile=` entries are applied in order, later ones win. The app's own `.env`
   comes first and AHost's `/etc/ahost/apps/<app>.env` last, so `PORT` and AHost-managed values always win.
   (A start script that re-sources `.env` itself can still override; the importer flags that.)
-- The runner `exec`s the command, so `$MAINPID` is the app process, which keeps `ExecReload=kill -HUP $MAINPID` and
-  `KillMode=mixed` correct. It uses `/bin/bash` by absolute path, so an app's restricted `PATH` can't break it.
+- The run script `exec`s the command, so `$MAINPID` is the app process, which keeps `ExecReload=kill -HUP $MAINPID` and
+  `KillMode=mixed` correct. It's a `#!/bin/bash` script, so an app's restricted `PATH` can't break it. Commands with
+  shell operators (`&&`, `|`, …) run via `bash -c`.
+- The manifest's `env` is rendered as `Environment=`, so the app's own `.env` still overrides it, exactly as with a
+  hand-written unit. Only AHost-owned values (`PORT`, GPU variables) live in the env file, which wins over everything.
 - **Stop in the UI = stop + disable** (the app stays stopped across reboots); Start = enable + start.
 
 ## Ports
